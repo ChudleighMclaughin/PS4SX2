@@ -24,8 +24,8 @@
 #include <condition_variable>
 #include <mutex>
 #include <optional>
-#include <thread>
 #include <x86intrin.h>
+#include "common/Threading.h"
 #endif
 
 #include "common/Console.h"
@@ -440,6 +440,7 @@ namespace SPU2Thread
 		std::mutex s_mutex;
 		std::condition_variable s_cv;
 		bool s_started = false;
+		bool s_worker_ready = false; // guarded by s_mutex
 		bool s_applying = false;
 		Stats s_stats{};
 		std::atomic<u64> s_worker_ticks{0};
@@ -447,6 +448,11 @@ namespace SPU2Thread
 		void WorkerMain()
 		{
 			PS4ThreadAffinity::PinCurrentThread("SPU2", g_core);
+			{
+				std::lock_guard lock(s_mutex);
+				s_worker_ready = true;
+			}
+			s_cv.notify_all();
 			u64 done = s_done.load(std::memory_order_relaxed);
 			for (;;)
 			{
@@ -518,7 +524,20 @@ namespace SPU2Thread
 			s_target.store(cClocks, std::memory_order_relaxed);
 			// The first post mixes on the EE thread; the worker takes the rest.
 			TimeUpdateMix(cClocks);
-			std::thread(WorkerMain).detach();
+			// (AI-assisted) perf-test9: a new thread starts on its creator's core (the EE's). perf-test8
+			// then spun in Sync() on that core and the worker never ran: frozen at the first BIOS frame.
+			// Start it like the port's other threads (256 KB stack) and sleep until it is on its own core.
+			Threading::Thread worker; // detached when it goes out of scope
+			worker.SetStackSize(256 * 1024);
+			if (!worker.Start(WorkerMain))
+			{
+				Console.Error("SPU2 worker: thread creation failed; mixing stays on the EE thread");
+				g_enabled = false;
+				s_started = false;
+				return;
+			}
+			std::unique_lock lock(s_mutex);
+			s_cv.wait(lock, [] { return s_worker_ready; });
 			return;
 		}
 		s_stats.posts++;

@@ -865,7 +865,9 @@ static void* RunVM(void*)
 			g_orbis_hle_flush.load(), g_orbis_pfw.load());
 	}
 	// (AI-assisted) perf-test8: opt-in SPU2 mixing on its own core (default 1, vm-cores.txt SPU2=N).
-	SPU2Thread::g_enabled = access("/data/PS4SX2/vm-spu2-thread", F_OK) == 0;
+	// (AI-assisted) perf-test9: without thread affinity the worker would stay on the EE's core and starve.
+	SPU2Thread::g_enabled = access("/data/PS4SX2/vm-spu2-thread", F_OK) == 0 &&
+		access("/data/PS4SX2/vm-no-thread-affinity", F_OK) != 0;
 	ProbeLog("SPU2 worker thread: %s\n", SPU2Thread::g_enabled ? "enabled by /data/PS4SX2/vm-spu2-thread (core 1 unless vm-cores.txt sets SPU2)" :
 															  "off (opt in with /data/PS4SX2/vm-spu2-thread)");
 	// (AI-assisted) Exact SMC mode must inspect code on every loop iteration.
@@ -1097,7 +1099,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test8\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test9\n");
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");
 	ProbeLog("Telemetry: PC debug server target from /data/PS4SX2/telemetry.conf (create with 'host=PC_IP port=19423')\n");
