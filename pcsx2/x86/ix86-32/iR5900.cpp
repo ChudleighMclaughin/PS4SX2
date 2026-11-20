@@ -26,6 +26,9 @@
 #include "common/Perf.h"
 #if defined(PCSX2_PS4_VM_BOOT)
 #include "ps4/core/SMCCheckPS4.h"
+#include "ps4/core/IdleLoopPS4.h"
+
+#include <optional>
 #endif
 #if defined(PCSX2_PS4_VM_EE_BLOCK_PROFILE)
 #include "ps4/core/EEHotspotsPS4.h"
@@ -142,6 +145,15 @@ static bool s_ps4_multiblock_wait;
 static u32 s_ps4_multiblock_wait_config;
 u64 g_ps4_multiblock_wait_blocks = 0;
 u64 g_ps4_multiblock_wait_runs = 0;
+// (AI-assisted) Opt-in (/data/PS4SX2/vm-ee-idle-skip): pure wait loops (ps4/core/IdleLoopPS4.h)
+// jump to the next scheduled event instead of spinning. Needs proper testing per game.
+bool g_ps4_idle_loop_skip = false;
+u64 g_ps4_idle_loop_blocks = 0;
+u64 g_ps4_idle_loop_runs = 0;
+u64 g_ps4_idle_loop_declined = 0;
+static bool s_ps4_idle_loop;
+static u32 s_ps4_idle_loop_slots;
+static u32 s_ps4_idle_loop_offsets;
 u64 g_ps4_multiblock_wait_iterations = 0;
 bool g_ps4_bytecopy_fusion = true;
 static bool s_ps4_bytecopy_loop;
@@ -1868,6 +1880,23 @@ u32 scaleblockcycles_clear()
 	return scaled;
 }
 
+// (AI-assisted) A detected wait loop may call through gp pointers (callbacks); it is only idle
+// while all of them are null. Returns 1 when the loop can skip to the next event.
+static u32 PS4IdleLoopCallbacksNull(u32 count, u32 offsets)
+{
+	const u32 gp = cpuRegs.GPR.n.gp.UL[0];
+	for (u32 i = 0; i < count; i++)
+	{
+		const s32 offset = static_cast<s16>(offsets >> (16 * i));
+		if (memRead32(gp + offset) != 0)
+		{
+			++g_ps4_idle_loop_declined;
+			return 0;
+		}
+	}
+	return 1;
+}
+
 // Generates dynarec code for Event tests followed by a block dispatch (branch).
 // Parameters:
 //   newpc - address to jump to at the end of the block.  If newpc == 0xffffffff then
@@ -1889,6 +1918,25 @@ static void iBranchTest(u32 newpc)
 	{
 		xADD(ptr64[&cpuRegs.cycle], scaleblockcycles());
 		xFastCall((void*)PS4FastForwardMultiBlockWait, s_ps4_multiblock_wait_config);
+		xJMP((void*)DispatcherEvent);
+	}
+	else if (EmuConfig.Speedhacks.WaitLoop && s_ps4_idle_loop && !s_nBlockFF && newpc == s_branchTo)
+	{
+		xADD(ptr64[&cpuRegs.cycle], scaleblockcycles());
+		std::optional<xForwardJZ32> busy;
+		if (s_ps4_idle_loop_slots)
+		{
+			xFastCall((void*)PS4IdleLoopCallbacksNull, s_ps4_idle_loop_slots, s_ps4_idle_loop_offsets);
+			xTEST(eax, eax);
+			busy.emplace();
+		}
+		xMOV(rax, ptr64[&cpuRegs.nextEventCycle]);
+		xCMP(rax, ptr64[&cpuRegs.cycle]);
+		xCMOVS(rax, ptr64[&cpuRegs.cycle]);
+		xMOV(ptr64[&cpuRegs.cycle], rax);
+		xADD(ptr64[&g_ps4_idle_loop_runs], 1);
+		if (busy)
+			busy->SetTarget();
 		xJMP((void*)DispatcherEvent);
 	}
 	else if (EmuConfig.Speedhacks.WaitLoop && s_nBlockFF && newpc == s_branchTo)
@@ -3059,6 +3107,9 @@ StartRecomp:
 	s_orbis_ff_ext = false;
 	s_ps4_multiblock_wait = false;
 	s_ps4_multiblock_wait_config = 0;
+	s_ps4_idle_loop = false;
+	s_ps4_idle_loop_slots = 0;
+	s_ps4_idle_loop_offsets = 0;
 	s_ps4_bytecopy_loop = false;
 	s_ps4_bytecopy_config = 0;
 	s_ps4_bytecopy_native = nullptr;
@@ -3241,6 +3292,24 @@ StartRecomp:
 			s_ps4_multiblock_wait = true;
 			s_ps4_multiblock_wait_config = counter_reg | (limit_reg << 5) | (loop_cycles << 10);
 			++g_ps4_multiblock_wait_blocks;
+		}
+	}
+
+	// (AI-assisted) General pure wait loop: the back branch closes a short loop that only reads
+	// RAM and computes, so nothing changes until the next event. See ps4/core/IdleLoopPS4.h.
+	if (g_ps4_idle_loop_skip && EmuConfig.Speedhacks.WaitLoop && !s_nBlockFF && !s_ps4_multiblock_wait &&
+		s_branchTo < s_nEndBlock && s_branchTo + 4 * PS4IdleLoop::MAX_INSTRUCTIONS >= s_nEndBlock &&
+		s_branchTo <= startpc)
+	{
+		const PS4IdleLoop::Result idle = PS4IdleLoop::Analyze(s_branchTo, s_nEndBlock, [](u32 address) { return memRead32(address); });
+		if (idle.ok)
+		{
+			s_ps4_idle_loop = true;
+			s_ps4_idle_loop_slots = static_cast<u32>(idle.slot_count);
+			for (int slot = 0; slot < idle.slot_count; slot++)
+				s_ps4_idle_loop_offsets |= static_cast<u32>(static_cast<u16>(idle.slot_offsets[slot])) << (16 * slot);
+			if (g_ps4_idle_loop_blocks++ < 32)
+				Console.WriteLn("EE idle loop: %08x-%08x callback_slots=%u", s_branchTo, s_nEndBlock - 4, s_ps4_idle_loop_slots);
 		}
 	}
 #endif
