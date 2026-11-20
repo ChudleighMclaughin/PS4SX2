@@ -5247,6 +5247,7 @@ void GSDeviceVK::OMSetRenderTargets(
 	GSTexture* rt, GSTexture* ds, const GSVector4i& scissor, FeedbackLoopFlag feedback_loop,
 	const GSVector2i& viewport_size)
 {
+	PS4_GS_SCOPE(VKOMSet); // (AI-assisted) perf-test6
 	GSTextureVK* vkRt = static_cast<GSTextureVK*>(rt);
 	GSTextureVK* vkDs = static_cast<GSTextureVK*>(ds);
 
@@ -7105,6 +7106,7 @@ VkPipeline GSDeviceVK::GetTFXPipeline(const PipelineSelector& p)
 
 bool GSDeviceVK::BindDrawPipeline(const PipelineSelector& p)
 {
+	PS4_GS_SCOPE(VKBindPipeline); // (AI-assisted) perf-test6
 	VkPipeline pipeline = GetTFXPipeline(p);
 	if (pipeline == VK_NULL_HANDLE)
 		return false;
@@ -7516,6 +7518,7 @@ bool GSDeviceVK::InRenderPass()
 
 void GSDeviceVK::BeginRenderPass(VkRenderPass rp, const GSVector4i& rect)
 {
+	PS4_GS_SCOPE(VKBeginPass); // (AI-assisted) perf-test6
 	if (m_current_render_pass != VK_NULL_HANDLE)
 		EndRenderPass();
 
@@ -7644,6 +7647,7 @@ __ri void GSDeviceVK::ApplyBaseState(u32 flags, VkCommandBuffer cmdbuf)
 
 bool GSDeviceVK::ApplyTFXState(bool already_execed)
 {
+	PS4_GS_SCOPE(VKApplyState); // (AI-assisted) perf-test6
 	if (m_current_pipeline_layout == PipelineLayout::TFX && m_dirty_flags == 0)
 		return true;
 
@@ -8496,6 +8500,7 @@ void GSDeviceVK::UpdateHWPipelineSelector(GSHWDrawConfig& config, PipelineSelect
 
 void GSDeviceVK::UploadHWDrawVerticesAndIndices(GSHWDrawConfig& config)
 {
+	PS4_GS_SCOPE(VKUpload); // (AI-assisted) perf-test6
 	IASetVertexBuffer(config.verts, sizeof(GSVertex), config.nverts, GetVertexAlignment(config.vs.expand));
 
 	if (config.vs.UseFixedExpandIndexBuffer())
@@ -8547,6 +8552,7 @@ VkDependencyFlags GSDeviceVK::GetFeedbackBarrierDependencyFlags() const
 void GSDeviceVK::SendHWDraw(const GSHWDrawConfig& config, GSTextureVK* draw_rt, GSTextureVK* draw_ds,
 	bool one_barrier, bool full_barrier)
 {
+	PS4_GS_SCOPE(VKSendDraw); // (AI-assisted) perf-test6
 	if (!m_features.texture_barrier) [[unlikely]]
 	{
 		Draw(config);

@@ -7,9 +7,16 @@
 #include "common/Pcsx2Defs.h"
 
 #include <atomic>
+#include <cstring>
+#include <unistd.h>
 
-bool OrbisFlag(const char*)
+// (AI-assisted) perf-test6: only the PS5 port's per-draw timing ("drawprof") is
+// reachable on PS4, through /data/PS4SX2/vm-profile-gs-draw. Every other PS5
+// flag stays off. GSRendererHW reads it once, at the first draw.
+bool OrbisFlag(const char* name)
 {
+	if (name && std::strcmp(name, "drawprof") == 0)
+		return access("/data/PS4SX2/vm-profile-gs-draw", F_OK) == 0;
 	return false;
 }
 

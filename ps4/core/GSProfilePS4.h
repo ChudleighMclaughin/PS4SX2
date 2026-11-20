@@ -25,8 +25,21 @@ namespace PS4GSProfile
 		TextureUpdate,
 		Readback,
 		SWSprite,
+		// (AI-assisted) perf-test6: parts of a hardware draw, sampled like HWDraw.
+		SetupIA,
+		EmulateBlending,
+		VKApplyState,
+		VKBindPipeline,
+		VKUpload,
+		VKSendDraw,
+		VKBeginPass,
+		VKOMSet,
 		Count
 	};
+	constexpr bool IsHot(Kind kind)
+	{
+		return kind == HWDraw || kind == VKRender || kind == TextureUpdate || kind >= SWSprite;
+	}
 	struct Counter
 	{
 		u64 calls = 0, samples = 0;
@@ -47,7 +60,7 @@ namespace PS4GSProfile
 				return;
 			auto& c = counters[kind];
 			++c.calls;
-			if (kind == HWDraw || kind == VKRender || kind == TextureUpdate || kind == SWSprite)
+			if (IsHot(kind))
 			{
 				c.random = c.random * 1664525U + 1013904223U;
 				if ((c.random >> 26) != 0) // Time roughly 1/64 hot calls.

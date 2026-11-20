@@ -5599,6 +5599,7 @@ void GSRendererHW::HandleFlatShadedVertices()
 
 void GSRendererHW::SetupIA(float target_scale, float sx, float sy, bool req_vert_backup, const bool no_rt)
 {
+	PS4_GS_SCOPE(SetupIA); // (AI-assisted) perf-test6
 	GL_PUSH("HW: IA");
 
 	// Do not force even sprite positive for texture shuffles since the coordinates are already aligned.
@@ -6929,6 +6930,7 @@ __ri u32 GSRendererHW::EmulateChannelShuffle(GSTextureCache::Target* src, bool t
 void GSRendererHW::EmulateBlending(int rt_alpha_min, int rt_alpha_max, DATEOptions& date_options,
 	GSTextureCache::Target* rt, bool can_scale_rt_alpha, bool& new_rt_alpha_scale)
 {
+	PS4_GS_SCOPE(EmulateBlending); // (AI-assisted) perf-test6
 	const GIFRegALPHA& ALPHA = m_context->ALPHA;
 	{
 		// PABE: Check condition early as an optimization, no blending when As < 128.
@@ -9724,7 +9726,16 @@ __ri void GSRendererHW::DrawPrims(GSTextureCache::Target* rt, GSTextureCache::Ta
 
 	OrbisDecalFixVerts(); // vk-285-118
 	if (!m_channel_shuffle_width)
+	{
+		// (AI-assisted) perf-test6: feeds the [hwprof] renderhw_us column under drawprof.
+		const unsigned long long orbis_rhw_t0 = ORBIS_TSC();
 		g_gs_device->RenderHW(m_conf);
+		if (orbis_rhw_t0)
+		{
+			g_orbis_renderhw_ticks += ORBIS_TSC() - orbis_rhw_t0;
+			++g_orbis_renderhw_n;
+		}
+	}
 	else
 		m_last_rt = rt;
 
