@@ -576,6 +576,8 @@ extern int PlayMode;
 
 extern void SetIrqCall(int core);
 extern void SetIrqCallDMA(int core);
+extern void SPU2RaiseDMA4Irq(); // spu2DMA4Irq now, or deferred when called on the SPU2 worker
+extern void SPU2RaiseDMA7Irq();
 extern void StartVoices(int core, u32 value);
 extern void StopVoices(int core, u32 value);
 extern void CalculateADSR(V_Voice& vc);

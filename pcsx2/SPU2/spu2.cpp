@@ -70,6 +70,7 @@ void SPU2writeDMA4Mem(u16* pMem, u32 size) // size now in 16bit units
 
 void SPU2interruptDMA4()
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	SPU2::FileLog("[%10d] SPU2 interruptDMA4\n", Cycles);
 	if (Cores[0].DmaMode)
 		Cores[0].Regs.STATX |= 0x80;
@@ -79,6 +80,7 @@ void SPU2interruptDMA4()
 
 void SPU2interruptDMA7()
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	SPU2::FileLog("[%10d] SPU2 interruptDMA7\n", Cycles);
 	if (Cores[1].DmaMode)
 		Cores[1].Regs.STATX |= 0x80;
@@ -105,6 +107,7 @@ void SPU2writeDMA7Mem(u16* pMem, u32 size)
 
 void SPU2::CreateOutputStream()
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	// Initialize volume and mute settings on new session.
 	if (!s_output_stream)
 	{
@@ -138,6 +141,7 @@ void SPU2::CreateOutputStream()
 
 void SPU2::UpdateSampleRate()
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	if (s_output_stream && s_output_stream->GetSampleRate() == GetConsoleSampleRate())
 		return;
 
@@ -158,6 +162,7 @@ u32 SPU2::GetOutputVolume()
 
 void SPU2::SetOutputVolume(u32 volume)
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	if (VMManager::GetTargetSpeed() == 1.0f)
 		s_standard_volume = volume;
 	else
@@ -175,6 +180,7 @@ float SPU2::GetNominalRate()
 
 bool SPU2::SetOutputMuted(const bool muted)
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	// User setting takes precedence. Unmute not guaranteed by design.
 	if (!s_output_stream || (!muted && EmuConfig.SPU2.OutputMuted))
 		return false;
@@ -197,6 +203,7 @@ bool SPU2::IsOutputMuted()
 
 void SPU2::UpdateOutputVolume()
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	s_output_stream->SetOutputVolume(s_output_muted ?
 										 0 : (VMManager::GetTargetSpeed() == 1.0f ?
 										 	s_standard_volume : s_fast_forward_volume));
@@ -215,11 +222,13 @@ void SPU2::SaveOutputVolume()
 
 void SPU2::SetOutputPaused(bool paused)
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	s_output_stream->SetPaused(paused);
 }
 
 void SPU2::SetAudioCaptureActive(bool active)
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	s_audio_capture_active = active;
 }
 
@@ -230,6 +239,7 @@ bool SPU2::IsAudioCaptureActive()
 
 void SPU2::InternalReset(bool psxmode)
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	spu2Mix = MULTI_ISA_SELECT(spu2Mix);
 	ReverbDownsample = MULTI_ISA_SELECT(ReverbDownsample);
 	ReverbUpsample = MULTI_ISA_SELECT(ReverbUpsample);
@@ -255,12 +265,14 @@ void SPU2::InternalReset(bool psxmode)
 
 void SPU2::Reset(bool psxmode)
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	InternalReset(psxmode);
 	UpdateSampleRate();
 }
 
 void SPU2::OnTargetSpeedChanged()
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	if (!s_output_stream)
 		return;
 
@@ -290,6 +302,7 @@ void SPU2::OnTargetSpeedChanged()
 
 bool SPU2::Open()
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 #ifdef PCSX2_DEVBUILD
 	if (SPU2::AccessLog())
 		SPU2::OpenFileLog();
@@ -316,6 +329,7 @@ bool SPU2::Open()
 
 void SPU2::Close()
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	FileLog("[%10d] SPU2 Close\n", Cycles);
 
 	s_output_stream.reset();
@@ -336,6 +350,7 @@ bool SPU2::IsRunningPSXMode()
 
 void SPU2::CheckForConfigChanges(const Pcsx2Config& old_config)
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	const Pcsx2Config::SPU2Options& opts = EmuConfig.SPU2;
 	const Pcsx2Config::SPU2Options& old_opts = old_config.SPU2;
 
@@ -386,11 +401,20 @@ void SPU2::CheckForConfigChanges(const Pcsx2Config& old_config)
 
 void SPU2async()
 {
+#if defined(PCSX2_PS4_VM_BOOT)
+	// (AI-assisted) perf-test8: hand the mixing to the SPU2 worker (not in PS1 mode).
+	if (SPU2Thread::g_enabled && !s_psxmode)
+	{
+		SPU2Thread::AsyncUpdate(psxRegs.cycle);
+		return;
+	}
+#endif
 	TimeUpdate(psxRegs.cycle);
 }
 
 u16 SPU2read(u32 rmem)
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	u16 ret = 0xDEAD;
 	u32 core = 0;
 	const u32 mem = rmem & 0xFFFF;
@@ -462,6 +486,7 @@ void SPU2write(u32 rmem, u16 value)
 
 s32 SPU2freeze(FreezeAction mode, freezeData* data)
 {
+	SPU2_SYNC(); // (AI-assisted) perf-test8: the worker must be idle here
 	pxAssume(data != nullptr);
 	if (!data)
 	{

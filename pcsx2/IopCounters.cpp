@@ -479,6 +479,7 @@ void psxRcntUpdate()
 		_rcntTestTarget(i);
 	}
 
+	SPU2_SYNC(); // (AI-assisted) perf-test8: lClocks belongs to the SPU2 worker until it is idle
 	const u32 spu2_delta = (psxRegs.cycle - lClocks) % 768;
 	psxCounters[6].startCycle = psxRegs.cycle - spu2_delta;
 	psxCounters[6].deltaCycles = psxCounters[6].rate;

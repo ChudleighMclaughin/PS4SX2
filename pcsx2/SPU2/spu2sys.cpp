@@ -18,6 +18,14 @@
 #include "SPU2/spu2.h"
 #if defined(PCSX2_PS4_VM_BOOT)
 #include "ps4/core/EEEventProfilePS4.h"
+#include "ps4/core/ThreadAffinityPS4.h"
+#include "IopDma.h"
+#include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <optional>
+#include <thread>
+#include <x86intrin.h>
 #endif
 
 #include "common/Console.h"
@@ -44,13 +52,57 @@ void (*spu2Mix)();
 
 static bool psxmode = false;
 
+#if defined(PCSX2_PS4_VM_BOOT)
+// (AI-assisted) perf-test8: true only on the SPU2 worker thread, while it mixes.
+static thread_local bool t_spu2_worker = false;
+static std::atomic<u32> s_spu2_deferred_irq{0}, s_spu2_deferred_dma4{0}, s_spu2_deferred_dma7{0};
+#endif
+
+// (AI-assisted) perf-test8: the IOP side of an SPU2 interrupt. The worker may not
+// touch IOP registers, so it counts them for the EE thread's next Sync.
+static void SPU2RaiseIrq()
+{
+#if defined(PCSX2_PS4_VM_BOOT)
+	if (t_spu2_worker)
+	{
+		s_spu2_deferred_irq.fetch_add(1, std::memory_order_relaxed);
+		return;
+	}
+#endif
+	spu2Irq();
+}
+
+void SPU2RaiseDMA4Irq()
+{
+#if defined(PCSX2_PS4_VM_BOOT)
+	if (t_spu2_worker)
+	{
+		s_spu2_deferred_dma4.fetch_add(1, std::memory_order_relaxed);
+		return;
+	}
+#endif
+	spu2DMA4Irq();
+}
+
+void SPU2RaiseDMA7Irq()
+{
+#if defined(PCSX2_PS4_VM_BOOT)
+	if (t_spu2_worker)
+	{
+		s_spu2_deferred_dma7.fetch_add(1, std::memory_order_relaxed);
+		return;
+	}
+#endif
+	spu2DMA7Irq();
+}
+
 void SetIrqCall(int core)
 {
 	//SPU2::ConLog("* SPU2: Irq Called (%04x) at cycle %d.\n", Spdif.Info, Cycles);
 	if (!(Spdif.Info & (4 << core)) && Cores[core].IRQEnable)
 	{
 		Spdif.Info |= (4 << core);
-		spu2Irq();
+		SPU2RaiseIrq();
 	}
 }
 
@@ -317,7 +369,8 @@ __forceinline void CheckDMAProgress(int cid)
 static constexpr uint TickInterval = 768;
 static constexpr int SanityInterval = 4800;
 
-__forceinline void TimeUpdate(u64 cClocks)
+// (AI-assisted) perf-test8: the mixing part of TimeUpdate, run by the EE thread or the SPU2 worker.
+static __forceinline void TimeUpdateMix(u64 cClocks)
 {
 	u32 dClocks = cClocks - lClocks;
 
@@ -342,8 +395,10 @@ __forceinline void TimeUpdate(u64 cClocks)
 
 	//Update Mixing Progress
 #if defined(PCSX2_PS4_VM_BOOT)
-	// (AI-assisted) perf-test5: SPU2 voice mixing, including the output write.
-	PS4EEEventProfile::SubScope sub_scope(PS4EEEventProfile::SubPhase::SPU2Mix);
+	// (AI-assisted) perf-test5: SPU2 voice mixing, including the output write (EE thread only).
+	std::optional<PS4EEEventProfile::SubScope> sub_scope;
+	if (!t_spu2_worker)
+		sub_scope.emplace(PS4EEEventProfile::SubPhase::SPU2Mix);
 #endif
 	while (dClocks >= TickInterval)
 	{
@@ -368,7 +423,132 @@ __forceinline void TimeUpdate(u64 cClocks)
 
 		spu2Mix();
 	}
+}
 
+#if defined(PCSX2_PS4_VM_BOOT)
+namespace SPU2Thread
+{
+	bool g_enabled = false;
+	int g_core = 1;
+
+	namespace
+	{
+		constexpr u64 IDLE = ~0ull;
+		std::atomic<u64> s_target{IDLE}; // written by the EE thread only
+		std::atomic<u64> s_done{IDLE}; // written by the worker only
+		std::atomic<bool> s_sleeping{false};
+		std::mutex s_mutex;
+		std::condition_variable s_cv;
+		bool s_started = false;
+		bool s_applying = false;
+		Stats s_stats{};
+		std::atomic<u64> s_worker_ticks{0};
+
+		void WorkerMain()
+		{
+			PS4ThreadAffinity::PinCurrentThread("SPU2", g_core);
+			u64 done = s_done.load(std::memory_order_relaxed);
+			for (;;)
+			{
+				u64 target = s_target.load(std::memory_order_seq_cst);
+				u32 spins = 0;
+				while (target == done)
+				{
+					// Posts come every IOP tick (~20-40 us) while a game runs; sleep
+					// only when none came for a while (pause, menus, loading).
+					if (++spins < 20000)
+					{
+						_mm_pause();
+						target = s_target.load(std::memory_order_seq_cst);
+						continue;
+					}
+					std::unique_lock lock(s_mutex);
+					s_sleeping.store(true, std::memory_order_seq_cst);
+					s_cv.wait(lock, [&] { return (target = s_target.load(std::memory_order_seq_cst)) != done; });
+					s_sleeping.store(false, std::memory_order_relaxed);
+					spins = 0;
+				}
+				const u32 before = Cycles;
+				t_spu2_worker = true;
+				TimeUpdateMix(target);
+				t_spu2_worker = false;
+				s_worker_ticks.fetch_add(Cycles - before, std::memory_order_relaxed);
+				done = target;
+				s_done.store(done, std::memory_order_release);
+			}
+		}
+	} // namespace
+
+	void Sync()
+	{
+		if (!s_started || t_spu2_worker)
+			return;
+		const u64 target = s_target.load(std::memory_order_relaxed);
+		if (s_done.load(std::memory_order_acquire) != target)
+		{
+			const u64 t0 = __rdtsc();
+			while (s_done.load(std::memory_order_acquire) != target)
+				_mm_pause();
+			s_stats.waits++;
+			s_stats.wait_tsc += __rdtsc() - t0;
+		}
+		if (s_applying)
+			return;
+		s_applying = true;
+		for (u32 n = s_spu2_deferred_irq.exchange(0, std::memory_order_relaxed); n; n--, s_stats.irqs++)
+			spu2Irq();
+		for (u32 n = s_spu2_deferred_dma4.exchange(0, std::memory_order_relaxed); n; n--, s_stats.dma4++)
+			spu2DMA4Irq();
+		for (u32 n = s_spu2_deferred_dma7.exchange(0, std::memory_order_relaxed); n; n--, s_stats.dma7++)
+			spu2DMA7Irq();
+		s_applying = false;
+	}
+
+	void AsyncUpdate(u64 cClocks)
+	{
+		Sync();
+		CheckDMAProgress(0);
+		CheckDMAProgress(1);
+		if (cClocks == s_target.load(std::memory_order_relaxed))
+			return;
+		if (!s_started)
+		{
+			s_started = true;
+			s_done.store(cClocks, std::memory_order_relaxed);
+			s_target.store(cClocks, std::memory_order_relaxed);
+			// The first post mixes on the EE thread; the worker takes the rest.
+			TimeUpdateMix(cClocks);
+			std::thread(WorkerMain).detach();
+			return;
+		}
+		s_stats.posts++;
+		s_target.store(cClocks, std::memory_order_seq_cst);
+		if (s_sleeping.load(std::memory_order_seq_cst))
+		{
+			std::lock_guard lock(s_mutex);
+			s_cv.notify_one();
+		}
+	}
+
+	Stats GetStats()
+	{
+		Stats stats = s_stats;
+		stats.worker_ticks = s_worker_ticks.load(std::memory_order_relaxed);
+		return stats;
+	}
+} // namespace SPU2Thread
+#endif
+
+__forceinline void TimeUpdate(u64 cClocks)
+{
+#if defined(PCSX2_PS4_VM_BOOT)
+	SPU2_SYNC();
+	const u32 before = Cycles;
+	TimeUpdateMix(cClocks);
+	SPU2Thread::s_stats.sync_ticks += Cycles - before;
+#else
+	TimeUpdateMix(cClocks);
+#endif
 	CheckDMAProgress(0);
 	CheckDMAProgress(1);
 }

@@ -19,6 +19,7 @@
 #include "ps2/BiosTools.h"
 #include "R5900.h"
 #include "R3000A.h"
+#include "SPU2/spu2.h"
 #include "IPU/IPU.h"
 #include "IPU/IPU_MultiISA.h"
 #include "SIO/Pad/Pad.h"
@@ -398,6 +399,16 @@ void VMHostPoll()
 		ProbeLog("VTLB cached access sites compiled: quad_reads=%llu writes=%llu (not runtime calls)\n",
 			static_cast<unsigned long long>(g_ps4_vtlb_cached_quad_reads),
 			static_cast<unsigned long long>(g_ps4_vtlb_cached_writes));
+		if (SPU2Thread::g_enabled)
+		{
+			// (AI-assisted) perf-test8: SPU2 worker counters (cumulative).
+			const SPU2Thread::Stats st = SPU2Thread::GetStats();
+			ProbeLog("SPU2 worker cumulative: posts=%llu worker_ticks=%llu ee_sync_ticks=%llu ee_waits=%llu ee_wait_ms=%.1f deferred_irq=%llu dma4=%llu dma7=%llu\n",
+				static_cast<unsigned long long>(st.posts), static_cast<unsigned long long>(st.worker_ticks),
+				static_cast<unsigned long long>(st.sync_ticks), static_cast<unsigned long long>(st.waits),
+				st.wait_tsc / 1.6e6, static_cast<unsigned long long>(st.irqs),
+				static_cast<unsigned long long>(st.dma4), static_cast<unsigned long long>(st.dma7));
+		}
 		ProbeLog("EE PS5 fast paths cumulative: tid_hits=%llu tid_checks=%llu tid_mismatches=%llu eret_skips=%llu "
 				 "eret_kept_intc=%llu dmac=%llu timer=%llu vu0=%llu vif1_fused=%llu hle_flushes=%llu\n",
 			static_cast<unsigned long long>(g_orbis_tid_hits), static_cast<unsigned long long>(g_orbis_tid_checks),
@@ -853,6 +864,10 @@ static void* RunVM(void*)
 			g_orbis_hle_tid.load(), g_orbis_eret_fast.load(), g_orbis_vif_fast.load(), g_orbis_vif1_fuse.load(),
 			g_orbis_hle_flush.load(), g_orbis_pfw.load());
 	}
+	// (AI-assisted) perf-test8: opt-in SPU2 mixing on its own core (default 1, vm-cores.txt SPU2=N).
+	SPU2Thread::g_enabled = access("/data/PS4SX2/vm-spu2-thread", F_OK) == 0;
+	ProbeLog("SPU2 worker thread: %s\n", SPU2Thread::g_enabled ? "enabled by /data/PS4SX2/vm-spu2-thread (core 1 unless vm-cores.txt sets SPU2)" :
+															  "off (opt in with /data/PS4SX2/vm-spu2-thread)");
 	// (AI-assisted) Exact SMC mode must inspect code on every loop iteration.
 	g_ps4_bytecopy_fusion = g_ps4_skip_smc_checks && access("/data/PS4SX2/vm-no-bytecopy-fusion", F_OK) != 0;
 	g_ps4_bytecopy_blocks = g_ps4_bytecopy_runs = g_ps4_bytecopy_bytes = 0;
@@ -903,6 +918,7 @@ static void* RunVM(void*)
 		g_orbis_vif1_fuse.store(0, std::memory_order_relaxed);
 		g_orbis_hle_flush.store(0, std::memory_order_relaxed);
 		g_orbis_pfw.store(0, std::memory_order_relaxed);
+		SPU2Thread::g_enabled = false;
 #endif
 		// Still before VM reset and the first guest instruction. Updating the base
 		// layer also preserves the profile when menu settings are reapplied later.
@@ -1081,7 +1097,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test7\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test8\n");
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");
 	ProbeLog("Telemetry: PC debug server target from /data/PS4SX2/telemetry.conf (create with 'host=PC_IP port=19423')\n");

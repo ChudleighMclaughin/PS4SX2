@@ -46,9 +46,9 @@ StereoOut32 V_Core::ReadInput_HiFi()
 		if (!InputDataTransferred && !InputDataLeft)
 		{
 			if (Index == 0)
-				spu2DMA4Irq();
+				SPU2RaiseDMA4Irq();
 			else
-				spu2DMA7Irq();
+				SPU2RaiseDMA7Irq();
 		}
 	}
 
@@ -118,9 +118,9 @@ StereoOut32 V_Core::ReadInput()
 		if (!InputDataTransferred && !InputDataLeft)
 		{
 			if (Index == 0)
-				spu2DMA4Irq();
+				SPU2RaiseDMA4Irq();
 			else
-				spu2DMA7Irq();
+				SPU2RaiseDMA7Irq();
 		}
 	}
 

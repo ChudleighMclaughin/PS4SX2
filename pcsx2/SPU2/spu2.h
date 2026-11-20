@@ -82,5 +82,27 @@ extern u64 lClocks;
 
 extern void CounterUpdate(u32 DMAICounter);
 extern void TimeUpdate(u64 cClocks);
+
+#if defined(PCSX2_PS4_VM_BOOT)
+// (AI-assisted) perf-test8: opt-in SPU2 mixing on a worker thread (vm-spu2-thread).
+// The EE thread posts "mix up to IOP cycle N" from SPU2async and goes on; every
+// other SPU2 entry point first waits for the worker (Sync) and applies the IOP
+// interrupts the worker deferred. Needs proper testing.
+namespace SPU2Thread
+{
+	extern bool g_enabled; // set on the EE thread before the VM runs
+	extern int g_core; // worker core (vm-cores.txt "SPU2=" overrides)
+	void Sync(); // EE thread: wait for the worker, then apply its deferred IRQs
+	void AsyncUpdate(u64 cClocks); // EE thread: SPU2async when enabled
+	struct Stats
+	{
+		u64 posts, worker_ticks, sync_ticks, waits, wait_tsc, irqs, dma4, dma7;
+	};
+	Stats GetStats(); // EE thread
+} // namespace SPU2Thread
+#define SPU2_SYNC() SPU2Thread::Sync()
+#else
+#define SPU2_SYNC() do { } while (0)
+#endif
 extern void SPU2_FastWrite(u32 rmem, u16 value);
 
