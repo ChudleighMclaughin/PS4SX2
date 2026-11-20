@@ -30,6 +30,51 @@ namespace PS4EEEventProfile
 	};
 	extern SamplingState s_sampling; // EE owner only; configure before executing.
 	void Record(Phase phase, std::uint64_t nanoseconds);
+
+	// (AI-assisted) perf-test5: finer parts of the IOP and DMA phases, timed only
+	// inside an event test that is already sampled, so the cost stays at 1/1024.
+	enum class SubPhase : unsigned
+	{
+		IOPExecute,
+		IOPEventTest,
+		SPU2Mix,
+		AudioWrite,
+		DmaMTVU,
+		DmaVIF1,
+		DmaGIF,
+		DmaSIF0,
+		DmaSIF1,
+		DmaOther,
+		Count
+	};
+	extern bool s_sub_active; // EE owner only: true inside a sampled event test.
+	void RecordSub(SubPhase part, std::uint64_t nanoseconds);
+
+	class SubScope
+	{
+	public:
+		explicit SubScope(SubPhase part) : m_part(part)
+		{
+			if (!s_sub_active)
+				return;
+			m_on = true;
+			m_start = Common::Timer::GetCurrentValue();
+		}
+		~SubScope()
+		{
+			if (!m_on)
+				return;
+			RecordSub(m_part, static_cast<std::uint64_t>(
+				Common::Timer::ConvertValueToNanoseconds(Common::Timer::GetCurrentValue() - m_start)));
+		}
+		SubScope(const SubScope&) = delete;
+		SubScope& operator=(const SubScope&) = delete;
+
+	private:
+		SubPhase m_part;
+		bool m_on = false;
+		Common::Timer::Value m_start = 0;
+	};
 	void LogInterval(double seconds); // GS consumer only.
 	void RecordGap(std::uint32_t start_pc, std::uint32_t end_pc, std::uint64_t nanoseconds);
 	void LogGaps(double seconds); // EE owner only, called by VMHostPoll.
@@ -43,6 +88,7 @@ namespace PS4EEEventProfile
 				return;
 			s_sampling.random = s_sampling.random * 1664525U + 1013904223U;
 			m_sampled = (s_sampling.random >> 22) == 0;
+			s_sub_active = m_sampled && !s_sampling.gaps_only;
 			if (!m_sampled && !s_sampling.gap_pending)
 				return;
 			m_previous = Common::Timer::GetCurrentValue();
@@ -57,6 +103,7 @@ namespace PS4EEEventProfile
 
 		~EventScope()
 		{
+			s_sub_active = false;
 			if (!m_sampled)
 				return;
 			if (s_sampling.gaps_only)

@@ -16,6 +16,9 @@
 #include "SPU2/Dma.h"
 #include "SPU2/regs.h"
 #include "SPU2/spu2.h"
+#if defined(PCSX2_PS4_VM_BOOT)
+#include "ps4/core/EEEventProfilePS4.h"
+#endif
 
 #include "common/Console.h"
 
@@ -338,6 +341,10 @@ __forceinline void TimeUpdate(u64 cClocks)
 	}
 
 	//Update Mixing Progress
+#if defined(PCSX2_PS4_VM_BOOT)
+	// (AI-assisted) perf-test5: SPU2 voice mixing, including the output write.
+	PS4EEEventProfile::SubScope sub_scope(PS4EEEventProfile::SubPhase::SPU2Mix);
+#endif
 	while (dClocks >= TickInterval)
 	{
 		dClocks -= TickInterval;

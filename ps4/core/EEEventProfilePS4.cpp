@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cstring>
+#include <cstdio>
 #include "pcsx2/vtlb.h"
 
 extern void ProbeLog(const char*, ...);
@@ -13,8 +14,19 @@ extern void ProbeLog(const char*, ...);
 namespace PS4EEEventProfile
 {
 	SamplingState s_sampling;
+	bool s_sub_active = false;
 	namespace
 	{
+		struct SubCounter
+		{
+			std::atomic<std::uint64_t> nanoseconds{0};
+			std::atomic<std::uint64_t> calls{0};
+			std::uint64_t last_nanoseconds = 0; // GS reader only.
+			std::uint64_t last_calls = 0;
+		};
+		SubCounter s_sub_counters[static_cast<unsigned>(SubPhase::Count)];
+		constexpr const char* SUB_NAMES[] = {"iop_execute", "iop_event_test", "spu2_mix", "audio_write",
+			"dma_mtvu", "dma_vif1", "dma_gif", "dma_sif0", "dma_sif1", "dma_other"};
 		struct Counter
 		{
 			std::atomic<std::uint64_t> nanoseconds{0};
@@ -101,8 +113,48 @@ namespace PS4EEEventProfile
 		counter.samples.fetch_add(1, std::memory_order_release);
 	}
 
+	void RecordSub(SubPhase part, std::uint64_t nanoseconds)
+	{
+		auto& counter = s_sub_counters[static_cast<unsigned>(part)];
+		counter.nanoseconds.fetch_add(nanoseconds, std::memory_order_relaxed);
+		counter.calls.fetch_add(1, std::memory_order_relaxed);
+	}
+
+	static void LogSubInterval(double seconds)
+	{
+		char ms_line[512];
+		char calls_line[512];
+		int ms_len = 0, calls_len = 0;
+		bool any = false;
+		for (unsigned i = 0; i < static_cast<unsigned>(SubPhase::Count); ++i)
+		{
+			auto& counter = s_sub_counters[i];
+			const auto ns = counter.nanoseconds.load(std::memory_order_relaxed);
+			const auto calls = counter.calls.load(std::memory_order_relaxed);
+			const auto delta_ns = ns - counter.last_nanoseconds;
+			const auto delta_calls = calls - counter.last_calls;
+			counter.last_nanoseconds = ns;
+			counter.last_calls = calls;
+			if (seconds <= 0.0)
+				continue;
+			any = any || delta_calls != 0;
+			if (ms_len < static_cast<int>(sizeof(ms_line)) - 48)
+				ms_len += std::snprintf(ms_line + ms_len, sizeof(ms_line) - ms_len, " %s=%.1f", SUB_NAMES[i],
+					static_cast<double>(delta_ns) * SAMPLE_WEIGHT / (seconds * 1000000.0));
+			if (calls_len < static_cast<int>(sizeof(calls_line)) - 48)
+				calls_len += std::snprintf(calls_line + calls_len, sizeof(calls_line) - calls_len, " %s=%.0f", SUB_NAMES[i],
+					static_cast<double>(delta_calls) * SAMPLE_WEIGHT / seconds);
+		}
+		if (!any)
+			return;
+		// Nested: spu2_mix includes audio_write, and iop_execute includes most of both.
+		ProbeLog("EE sub-phase profile (estimated wall ms per second):%s\n", ms_line);
+		ProbeLog("EE sub-phase calls (estimated per second):%s\n", calls_line);
+	}
+
 	void LogInterval(double seconds)
 	{
+		LogSubInterval(seconds);
 		for (unsigned i = 0; i < static_cast<unsigned>(Phase::Count); ++i)
 		{
 			auto& counter = s_counters[i];

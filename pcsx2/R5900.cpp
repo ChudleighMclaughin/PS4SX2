@@ -280,6 +280,16 @@ static __fi void TESTINT( u8 n, void (*callback)() )
 	if(CHECK_INSTANTDMAHACK || cpuTestCycle( cpuRegs.sCycle[n], cpuRegs.eCycle[n] ) )
 	{
 		cpuClearInt( n );
+#if defined(PCSX2_PS4_VM_BOOT)
+		// (AI-assisted) perf-test5: which DMA handler owns the DMA phase time.
+		using PS4EEEventProfile::SubPhase;
+		const SubPhase part = n == VU_MTVU_BUSY ? SubPhase::DmaMTVU :
+			n == DMAC_VIF1 ? SubPhase::DmaVIF1 :
+			n == DMAC_GIF  ? SubPhase::DmaGIF :
+			n == DMAC_SIF0 ? SubPhase::DmaSIF0 :
+			n == DMAC_SIF1 ? SubPhase::DmaSIF1 : SubPhase::DmaOther;
+		PS4EEEventProfile::SubScope sub_scope(part);
+#endif
 		callback();
 	}
 	else
@@ -466,12 +476,22 @@ __fi void _cpuEventTest_Shared()
 		//if( EEsCycle < -450 )
 		//	Console.WriteLn( " IOP ahead by: %d cycles", -EEsCycle );
 
-		EEsCycle = psxCpu->ExecuteBlock(EEsCycle);
+		{
+#if defined(PCSX2_PS4_VM_BOOT)
+			PS4EEEventProfile::SubScope sub_scope(PS4EEEventProfile::SubPhase::IOPExecute);
+#endif
+			EEsCycle = psxCpu->ExecuteBlock(EEsCycle);
+		}
 
 		iopEventAction = false;
 	}
 
-	iopEventTest();
+	{
+#if defined(PCSX2_PS4_VM_BOOT)
+		PS4EEEventProfile::SubScope sub_scope(PS4EEEventProfile::SubPhase::IOPEventTest);
+#endif
+		iopEventTest();
+	}
 #if defined(PCSX2_PS4_VM_BOOT)
 	event_profile.Checkpoint(PS4EEEventProfile::Phase::IOP);
 #endif

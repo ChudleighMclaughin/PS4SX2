@@ -11,6 +11,9 @@
 #include "MTGS.h"
 #include "R3000A.h"
 #include "VMManager.h"
+#if defined(PCSX2_PS4_VM_BOOT)
+#include "ps4/core/EEEventProfilePS4.h"
+#endif
 
 #include "common/Error.h"
 
@@ -530,7 +533,13 @@ __forceinline void spu2Output(StereoOut32 out)
 	{
 		s_current_chunk_pos = 0;
 
-		s_output_stream->WriteChunk(s_current_chunk.data());
+		{
+#if defined(PCSX2_PS4_VM_BOOT)
+			// (AI-assisted) perf-test5: output write, including SoundTouch time stretch.
+			PS4EEEventProfile::SubScope sub_scope(PS4EEEventProfile::SubPhase::AudioWrite);
+#endif
+			s_output_stream->WriteChunk(s_current_chunk.data());
+		}
 
 		if (SPU2::IsAudioCaptureActive()) [[unlikely]]
 			GSCapture::DeliverAudioPacket(s_current_chunk.data());
