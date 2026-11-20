@@ -67,6 +67,9 @@ extern std::atomic<u32> g_orbis_rec_compiles, g_orbis_rec_discards, g_orbis_rec_
 extern bool g_ps4_vtlb_register_cache;
 extern bool g_ps4_vtlb_bulk_register_cache;
 extern bool g_ps4_skip_smc_checks;
+extern bool g_ps4_smc_page_protect;
+extern std::atomic<u32> g_orbis_rec_faults;
+extern std::atomic<u32> g_ps4_mprotect_failures;
 extern bool g_ps4_bytecopy_fusion;
 extern std::atomic<int> g_orbis_waitloop_ext;
 extern u64 g_ps4_vtlb_cached_quad_reads, g_ps4_vtlb_cached_writes;
@@ -353,9 +356,12 @@ void VMHostPoll()
 		PS4EEEventProfile::s_sampling.gap_pending = false;
 		PS4EEEventProfile::LogGaps(interval);
 #if defined(PCSX2_PS4_VM_BOOT_JIT)
-		ProbeLog("EE JIT cumulative: compiles=%u discards=%u page_resets=%u full_resets=%u\n",
+		ProbeLog("EE JIT cumulative: compiles=%u discards=%u page_resets=%u full_resets=%u code_page_faults=%u "
+				 "mprotect_failures=%u page_protection=%s\n",
 			g_orbis_rec_compiles.load(std::memory_order_relaxed), g_orbis_rec_discards.load(std::memory_order_relaxed),
-			g_orbis_rec_page_resets.load(std::memory_order_relaxed), g_orbis_rec_full_resets.load(std::memory_order_relaxed));
+			g_orbis_rec_page_resets.load(std::memory_order_relaxed), g_orbis_rec_full_resets.load(std::memory_order_relaxed),
+			g_orbis_rec_faults.load(std::memory_order_relaxed), g_ps4_mprotect_failures.load(std::memory_order_relaxed),
+			g_ps4_smc_page_protect ? "on" : "off");
 		ProbeLog("VTLB cached access sites compiled: quad_reads=%llu writes=%llu (not runtime calls)\n",
 			static_cast<unsigned long long>(g_ps4_vtlb_cached_quad_reads),
 			static_cast<unsigned long long>(g_ps4_vtlb_cached_writes));
@@ -773,6 +779,12 @@ static void* RunVM(void*)
 	ProbeLog("EE JIT manual SMC validation: %s (%s)\n",
 		g_ps4_skip_smc_checks ? "relaxed (skip per-block checks, manual protection only)" : "enabled for all games (exact block checks)",
 		g_ps4_skip_smc_checks ? "enabled by /data/PS4SX2/vm-skip-smc" : "exact (reverted Fase 3-B)");
+	// (AI-assisted) Opt-in: code pages are write-protected (upstream PCSX2 behaviour) instead of
+	// checked on every block entry; pages that get written fall back to the exact checks.
+	g_ps4_smc_page_protect = !g_ps4_skip_smc_checks && access("/data/PS4SX2/vm-smc-pageprot", F_OK) == 0;
+	ProbeLog("EE JIT page protection for code pages: %s\n",
+		g_ps4_smc_page_protect ? "enabled by /data/PS4SX2/vm-smc-pageprot (written pages keep exact checks)" :
+								 "off (opt in with /data/PS4SX2/vm-smc-pageprot)");
 	// (AI-assisted) Exact SMC mode must inspect code on every loop iteration.
 	g_ps4_bytecopy_fusion = g_ps4_skip_smc_checks && access("/data/PS4SX2/vm-no-bytecopy-fusion", F_OK) != 0;
 	g_ps4_bytecopy_blocks = g_ps4_bytecopy_runs = g_ps4_bytecopy_bytes = 0;
@@ -811,6 +823,7 @@ static void* RunVM(void*)
 		settings->SetIntValue("EmuCore/Speedhacks", "EECycleSkip", 0);
 #if defined(PCSX2_PS4_VM_BOOT_JIT)
 		g_ps4_skip_smc_checks = false;
+		g_ps4_smc_page_protect = false;
 		g_ps4_bytecopy_fusion = false;
 		g_ps4_vtlb_register_cache = false;
 		g_ps4_vtlb_bulk_register_cache = false;
@@ -993,7 +1006,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test1\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test2\n");
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");
 	ProbeLog("Telemetry: PC debug server target from /data/PS4SX2/telemetry.conf (create with 'host=PC_IP port=19423')\n");

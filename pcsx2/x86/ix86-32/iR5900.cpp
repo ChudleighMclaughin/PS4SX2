@@ -73,6 +73,12 @@ std::atomic<int> g_orbis_rec_nocount{0};
 // on entry. The launcher may omit that prologue to measure its full cost.
 // Self-modifying guest code needs proper console testing before this is safe.
 bool g_ps4_skip_smc_checks = false;
+// (AI-assisted) Opt-in (/data/PS4SX2/vm-smc-pageprot): use upstream PCSX2's page protection for
+// code pages. A page holding only code is made read-only and its blocks skip the per-entry check;
+// the first write to it faults, clears its blocks and puts the page back on manual checks. If
+// mprotect ever fails, HostSysPS4 counts it and this falls back to manual checks for everything.
+bool g_ps4_smc_page_protect = false;
+extern std::atomic<u32> g_ps4_mprotect_failures;
 static int s_orbis_rec_nocount = 0;
 // vk-285-28: how much of the EE code cache is in use (GSRenderer.cpp, [rec] line).
 size_t OrbisRecEEUsed(size_t* size);
@@ -2565,7 +2571,9 @@ static void memory_protect_recompiled_code(u32 startpc, u32 size)
 	const bool contains_thread_stack = ((startpc >> 12) == 0x81) || ((startpc >> 12) == 0x80001);
 
 	// note: blocks are guaranteed to reside within the confines of a single page.
-	const vtlb_ProtectionMode PageType = (mmap_GetRamPageInfo(inpage_ptr) == ProtMode_NotRequired) ? ProtMode_NotRequired : ProtMode_Manual;
+	vtlb_ProtectionMode PageType = mmap_GetRamPageInfo(inpage_ptr);
+	if (PageType != ProtMode_NotRequired && (!g_ps4_smc_page_protect || g_ps4_skip_smc_checks))
+		PageType = ProtMode_Manual;
 	(void)contains_thread_stack;
 
 	switch (PageType)
@@ -2575,9 +2583,25 @@ static void memory_protect_recompiled_code(u32 startpc, u32 size)
 
 		case ProtMode_None:
 		case ProtMode_Write:
+		{
+			const u32 failures_before = g_ps4_mprotect_failures.load(std::memory_order_relaxed);
 			mmap_MarkCountedRamPage(inpage_ptr);
 			manual_page[inpage_ptr >> 12] = 0;
+			if (g_ps4_mprotect_failures.load(std::memory_order_relaxed) != failures_before)
+			{
+				// The page may not really be read-only. Check this block by hand, drop all page
+				// protection, and reset the cache at the next compile so no unchecked block remains.
+				g_ps4_smc_page_protect = false;
+				mmap_ResetBlockTracking();
+				eeRecNeedsReset = true;
+				printf("[rec] page protection failed; manual SMC checks for all blocks from now on\n");
+				fflush(stdout);
+				xMOV(arg1regd, inpage_ptr);
+				xMOV(arg2regd, inpage_sz / 4);
+				PS4SMCCheck::Emit(reinterpret_cast<const u8*>(PSM(inpage_ptr)), inpage_sz, DispatchBlockDiscard);
+			}
 			break;
+		}
 
 		case ProtMode_Manual:
 #if defined(PCSX2_PS4_VM_BOOT)
@@ -2733,28 +2757,6 @@ static bool recSkipTimeoutLoop(s32 reg, bool is_timeout_loop)
 
 static void recRecompile(const u32 startpc)
 {
-	if (0)
-		printf("[dbg] rec: recRecompile pc=%08x\n", startpc); // Orbis: no fflush (hot path; ticker flushes 1/s)
-	{
-		void* rsp_now = nullptr;
-#if defined(__x86_64__)
-		asm volatile("mov %%rsp, %0" : "=r"(rsp_now));
-#endif
-		static unsigned rec_probe = 0;
-		static void* lowest_rsp = nullptr;
-		const unsigned n = rec_probe++;
-		if (!lowest_rsp || rsp_now < lowest_rsp)
-			lowest_rsp = rsp_now;
-		if (n < 8 || (n % 100) == 0)
-		{
-			printf("[dbg] rec: recompile[%u] pc=%08x rsp=%p lowest=%p\n", n, startpc, rsp_now, lowest_rsp);
-			fflush(stdout);
-		}
-		{
-			ps4::debug::set_line(4, "rec[%u] pc=%08x", n, startpc);
-			ps4::debug::set_line(5, "pc=%08x cy=%u", cpuRegs.pc, (unsigned)cpuRegs.cycle);
-		}
-	}
 	u32 i = 0;
 	u32 willbranch3 = 0;
 
@@ -3542,39 +3544,6 @@ StartRecomp:
 
 	if (0)
 		printf("[dbg] blk: pc=%08x fnptr=%p x86size=%u insns=%u\n", s_pCurBlockEx->startpc, (void*)s_pCurBlockEx->fnptr, s_pCurBlockEx->x86size, s_pCurBlockEx->size);
-	if (s_pCurBlockEx->startpc == 0x00001000 || s_pCurBlockEx->startpc == 0x00005c30 ||
-		s_pCurBlockEx->startpc == 0x0000e530 || s_pCurBlockEx->startpc == 0x0000e4f8)
-	{
-		const u32* ew = (const u32*)PSM(s_pCurBlockEx->startpc);
-		for (u32 w = 0; w < s_pCurBlockEx->size; w++)
-			printf("[dbg] eew+%02x: %08x\n", w * 4, ew[w]);
-		const u8* xb = (const u8*)s_pCurBlockEx->fnptr;
-		u32 xn = s_pCurBlockEx->x86size;
-		for (u32 o = 0; o < xn; o += 16)
-		{
-			printf("[dbg] xb+%03x:", o);
-			for (u32 k = 0; k < 16 && o + k < xn; k++)
-				printf(" %02x", xb[o + k]);
-			printf("\n");
-		}
-	}
-	{
-		// Survey: what does each vmap LEA in the block ACTUALLY address?
-		const u8* b = (const u8*)s_pCurBlockEx->fnptr;
-		u32 n = s_pCurBlockEx->x86size;
-		int hits = 0;
-		for (u32 o = 0; o + 7 < n && hits < 8; o++)
-		{
-			if (b[o] == 0x48 && b[o + 1] == 0x8d && b[o + 2] == 0x14 && b[o + 3] == 0x25)
-			{
-				s32 d = (s32)((u32)b[o + 4] | ((u32)b[o + 5] << 8) | ((u32)b[o + 6] << 16) | ((u32)b[o + 7] << 24));
-				uptr base = (uptr)(b + o + 7) + (sptr)d;
-				printf("[dbg] leaprobe: blkpc=%08x off=%03x lea_base=%p\n", s_pCurBlockEx->startpc, o, (void*)base);
-				hits++;
-			}
-		}
-		fflush(stdout);
-	}
 	recPtr = xGetPtr();
 
 	pxAssert((g_cpuHasConstReg & g_cpuFlushedConstReg) == g_cpuHasConstReg);

@@ -6,6 +6,7 @@
 #include "common/Assertions.h"
 #include "common/HostSys.h"
 
+#include <atomic>
 #include <cerrno>
 #include <cstdlib>
 #include <cstdio>
@@ -69,6 +70,8 @@ std::string GetOSVersionString()
 	return "Orbis OS (PS4 homebrew)";
 }
 
+std::atomic<u32> g_ps4_mprotect_failures{0};
+
 void HostSys::MemProtect(void* baseaddr, size_t size, const PageProtectionMode& mode)
 {
 	int prot = PROT_NONE;
@@ -80,7 +83,17 @@ void HostSys::MemProtect(void* baseaddr, size_t size, const PageProtectionMode& 
 		prot |= PROT_EXEC;
 
 	if (mprotect(baseaddr, size, prot) != 0)
+	{
+		// (AI-assisted) pxFail is a no-op in release builds; count failures so callers that
+		// depend on protection (EE page-protection SMC) can fall back, and log the first one.
+		const int error = errno;
+		if (g_ps4_mprotect_failures.fetch_add(1, std::memory_order_relaxed) == 0)
+		{
+			std::printf("PS4 mprotect failed: addr=%p size=0x%zx prot=%d errno=%d\n", baseaddr, size, prot, error);
+			std::fflush(stdout);
+		}
 		pxFail("mprotect() failed on PS4");
+	}
 }
 
 std::string HostSys::GetFileMappingName(const char* prefix)
