@@ -69,6 +69,10 @@ extern bool g_ps4_vtlb_bulk_register_cache;
 extern bool g_ps4_skip_smc_checks;
 extern bool g_ps4_smc_page_protect;
 extern bool g_ps4_idle_loop_skip;
+// (AI-assisted) perf-test7: the PS5 port's EE fast paths (OrbisCompatPS4.cpp, PlatformVM.cpp).
+extern std::atomic<int> g_orbis_hle_tid, g_orbis_eret_fast, g_orbis_vif1_fuse, g_orbis_vif_fast, g_orbis_hle_flush, g_orbis_pfw;
+extern u64 g_orbis_tid_hits, g_orbis_tid_checks, g_orbis_tid_mismatches, g_orbis_eret_skips, g_orbis_vif1_fused, g_orbis_hle_flushes;
+extern u64 g_orbis_eret_block[4];
 // Wait/idle time counters (rdtsc ticks) kept by MTGS.cpp and MTVU.cpp.
 extern unsigned long long g_orbis_gs_idle_ticks, g_orbis_ee_waitgs_ticks, g_orbis_ee_stall_ticks, g_orbis_ee_vsyncq_ticks;
 extern unsigned long long g_orbis_vu_idle_ticks, g_orbis_ee_waitvu_ticks, g_orbis_ee_vuring_ticks;
@@ -394,6 +398,13 @@ void VMHostPoll()
 		ProbeLog("VTLB cached access sites compiled: quad_reads=%llu writes=%llu (not runtime calls)\n",
 			static_cast<unsigned long long>(g_ps4_vtlb_cached_quad_reads),
 			static_cast<unsigned long long>(g_ps4_vtlb_cached_writes));
+		ProbeLog("EE PS5 fast paths cumulative: tid_hits=%llu tid_checks=%llu tid_mismatches=%llu eret_skips=%llu "
+				 "eret_kept_intc=%llu dmac=%llu timer=%llu vu0=%llu vif1_fused=%llu hle_flushes=%llu\n",
+			static_cast<unsigned long long>(g_orbis_tid_hits), static_cast<unsigned long long>(g_orbis_tid_checks),
+			static_cast<unsigned long long>(g_orbis_tid_mismatches), static_cast<unsigned long long>(g_orbis_eret_skips),
+			static_cast<unsigned long long>(g_orbis_eret_block[0]), static_cast<unsigned long long>(g_orbis_eret_block[1]),
+			static_cast<unsigned long long>(g_orbis_eret_block[2]), static_cast<unsigned long long>(g_orbis_eret_block[3]),
+			static_cast<unsigned long long>(g_orbis_vif1_fused), static_cast<unsigned long long>(g_orbis_hle_flushes));
 		ProbeLog("EE idle loops: loops=%llu skips=%llu callback_busy=%llu\n",
 			static_cast<unsigned long long>(g_ps4_idle_loop_blocks), static_cast<unsigned long long>(g_ps4_idle_loop_runs),
 			static_cast<unsigned long long>(g_ps4_idle_loop_declined));
@@ -824,6 +835,24 @@ static void* RunVM(void*)
 	g_ps4_idle_loop_skip = access("/data/PS4SX2/vm-ee-idle-skip", F_OK) == 0;
 	ProbeLog("EE idle loop skip: %s\n", g_ps4_idle_loop_skip ? "enabled by /data/PS4SX2/vm-ee-idle-skip" :
 															  "off (opt in with /data/PS4SX2/vm-ee-idle-skip)");
+	// (AI-assisted) perf-test7: the PS5 port's EE fast paths, off by default on PS4.
+	// vm-ps5-fastpaths turns on the four the PS5 port shipped on by default:
+	// GetThreadId cache, no event test after a plain ERET, VIF register codes inline,
+	// and vif1Interrupt passes in place (Instant DMA games only). Each also has its
+	// own marker; FlushCache HLE and ring write prefetches are separate opt-ins.
+	{
+		const bool all = access("/data/PS4SX2/vm-ps5-fastpaths", F_OK) == 0;
+		auto on = [all](const char* marker) { return all || access(marker, F_OK) == 0; };
+		g_orbis_hle_tid.store(on("/data/PS4SX2/vm-hle-tid") ? 1 : 0, std::memory_order_relaxed);
+		g_orbis_eret_fast.store(on("/data/PS4SX2/vm-eret-fast") ? 1 : 0, std::memory_order_relaxed);
+		g_orbis_vif_fast.store(on("/data/PS4SX2/vm-vif-fast") ? 1 : 0, std::memory_order_relaxed);
+		g_orbis_vif1_fuse.store(on("/data/PS4SX2/vm-vif1-fuse") ? 1 : 0, std::memory_order_relaxed);
+		g_orbis_hle_flush.store(access("/data/PS4SX2/vm-hle-flush", F_OK) == 0 ? 1 : 0, std::memory_order_relaxed);
+		g_orbis_pfw.store(access("/data/PS4SX2/vm-pfw", F_OK) == 0 ? 1 : 0, std::memory_order_relaxed);
+		ProbeLog("PS5 EE fast paths: hle_tid=%d eret_fast=%d vif_fast=%d vif1_fuse=%d hle_flush=%d pfw=%d (vm-ps5-fastpaths sets the first four)\n",
+			g_orbis_hle_tid.load(), g_orbis_eret_fast.load(), g_orbis_vif_fast.load(), g_orbis_vif1_fuse.load(),
+			g_orbis_hle_flush.load(), g_orbis_pfw.load());
+	}
 	// (AI-assisted) Exact SMC mode must inspect code on every loop iteration.
 	g_ps4_bytecopy_fusion = g_ps4_skip_smc_checks && access("/data/PS4SX2/vm-no-bytecopy-fusion", F_OK) != 0;
 	g_ps4_bytecopy_blocks = g_ps4_bytecopy_runs = g_ps4_bytecopy_bytes = 0;
@@ -868,6 +897,12 @@ static void* RunVM(void*)
 		g_ps4_vtlb_register_cache = false;
 		g_ps4_vtlb_bulk_register_cache = false;
 		g_orbis_waitloop_ext.store(0, std::memory_order_relaxed);
+		g_orbis_hle_tid.store(0, std::memory_order_relaxed);
+		g_orbis_eret_fast.store(0, std::memory_order_relaxed);
+		g_orbis_vif_fast.store(0, std::memory_order_relaxed);
+		g_orbis_vif1_fuse.store(0, std::memory_order_relaxed);
+		g_orbis_hle_flush.store(0, std::memory_order_relaxed);
+		g_orbis_pfw.store(0, std::memory_order_relaxed);
 #endif
 		// Still before VM reset and the first guest instruction. Updating the base
 		// layer also preserves the profile when menu settings are reapplied later.
@@ -1046,7 +1081,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test6\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test7\n");
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");
 	ProbeLog("Telemetry: PC debug server target from /data/PS4SX2/telemetry.conf (create with 'host=PC_IP port=19423')\n");
