@@ -12,4 +12,7 @@ namespace PS4ProbeLogger
 	void LogStatus();
 	// Call after producers stop; drains the queue before detaching fd.
 	void Stop();
+	// From a crash handler: writes the lines still waiting in the queue straight to the log file,
+	// so the last lines before a crash are not lost. Uses only write/fsync and a mutex trylock.
+	void DrainForCrash();
 } // namespace PS4ProbeLogger

@@ -228,3 +228,43 @@ void PS4ProbeLogger::Stop()
 	s_fd = -1;
 	pthread_mutex_unlock(&s_mutex);
 }
+
+void PS4ProbeLogger::DrainForCrash()
+{
+	// Runs in a signal handler on the crashing thread. The mutex is only tried: the crashing
+	// thread may already hold it (it crashed inside Write), and a blocking lock would hang the
+	// console instead of letting the crash report finish. Without the lock the worker may write
+	// some of the same lines too, so a line can appear twice, but none is lost.
+	if (!s_async || s_fd < 0)
+		return;
+	const bool locked = pthread_mutex_trylock(&s_mutex) == 0;
+	const std::size_t count = std::min(s_count, CAPACITY);
+	if (count != 0)
+	{
+		static constexpr char header[] = "--- lines still queued when the crash happened ---\n";
+		(void)write(s_fd, header, sizeof(header) - 1);
+		std::size_t index = s_head % CAPACITY;
+		for (std::size_t i = 0; i < count; ++i)
+		{
+			const Entry& entry = s_queue[index];
+			const std::size_t length = std::min(entry.length, sizeof(entry.text) - 1);
+			std::size_t offset = 0;
+			while (offset < length)
+			{
+				const ssize_t written = write(s_fd, entry.text + offset, length - offset);
+				if (written <= 0)
+					break;
+				offset += static_cast<std::size_t>(written);
+			}
+			index = (index + 1) % CAPACITY;
+		}
+	}
+	(void)fsync(s_fd);
+	if (locked)
+	{
+		// Written here, so the worker must not write them again.
+		s_head = (s_head + count) % CAPACITY;
+		s_count -= count;
+		pthread_mutex_unlock(&s_mutex);
+	}
+}

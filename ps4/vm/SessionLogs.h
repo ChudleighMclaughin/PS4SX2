@@ -36,15 +36,41 @@ namespace PS4SessionLogs
 		}
 		char directory[128];
 		std::snprintf(directory, sizeof(directory), "/data/PS4SX2/logs/%s", result.directory);
+		// Only these app-owned files rotate; other files and folders are untouched. crash.log is
+		// here because ps4_crashlog writes it during the session being archived (MigrateLegacyLogs
+		// has already moved it into logs/), so each archive keeps its crash with its logs.
+		constexpr const char* names[] = {
+			"PCSX2-vm-boot.log", "PCSX2-vm-stdout.log", "PCSX2-vm-stderr.log", "emulog.txt", "crash.log"};
+		// (AI-assisted) Keep the last KEEP sessions per platform: <dir> is the newest, then
+		// <dir>.2 ... <dir>.KEEP. Rotate only when there is a session to archive.
+		constexpr int KEEP = 5;
+		if (access("/data/PS4SX2/logs/PCSX2-vm-boot.log", F_OK) == 0 && access(directory, F_OK) == 0)
+		{
+			char older[144], newer[144];
+			std::snprintf(older, sizeof(older), "%s.%d", directory, KEEP);
+			for (const char* name : names)
+			{
+				char path[176];
+				std::snprintf(path, sizeof(path), "%s/%s", older, name);
+				unlink(path);
+			}
+			// rmdir fails if someone put their own files there; renames onto it then fail and
+			// the archive falls back to the old one-session behaviour instead of losing them.
+			rmdir(older);
+			for (int index = KEEP - 1; index >= 2; --index)
+			{
+				std::snprintf(older, sizeof(older), "%s.%d", directory, index + 1);
+				std::snprintf(newer, sizeof(newer), "%s.%d", directory, index);
+				rename(newer, older);
+			}
+			std::snprintf(older, sizeof(older), "%s.2", directory);
+			rename(directory, older);
+		}
 		if (mkdir(directory, 0777) != 0 && errno != EEXIST)
 		{
 			result.error = errno;
 			return result;
 		}
-		// Only these app-owned files rotate. User crash reports and other folders
-		// are untouched. Keep one previous game per platform, rather than unbounded logs.
-		constexpr const char* names[] = {
-			"PCSX2-vm-boot.log", "PCSX2-vm-stdout.log", "PCSX2-vm-stderr.log", "emulog.txt"};
 		for (const char* name : names)
 		{
 			char source[160], target[160];

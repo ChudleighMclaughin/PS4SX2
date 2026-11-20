@@ -3,8 +3,11 @@
 #include "ThreadAffinityPS4.h"
 
 #include <atomic>
+#include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <pthread.h>
+#include <strings.h>
 #include <unistd.h>
 
 // OpenOrbis's public header declares these without parameters. Use the ABI
@@ -26,8 +29,69 @@ namespace PS4ThreadAffinity
 		return value != 0;
 	}
 
+	// The threads that called PinCurrentThread, for CurrentRole. A role that pins again (its thread
+	// was recreated) takes over its slot.
+	static constexpr int MAX_ROLES = 8;
+	static std::atomic<std::uintptr_t> s_role_threads[MAX_ROLES];
+	static std::atomic<const char*> s_role_names[MAX_ROLES];
+
+	static void RememberRole(const char* role)
+	{
+		const std::uintptr_t self = (std::uintptr_t)pthread_self();
+		for (int i = 0; i < MAX_ROLES; i++)
+		{
+			const char* name = s_role_names[i].load(std::memory_order_acquire);
+			if (name && std::strcmp(name, role) == 0)
+			{
+				s_role_threads[i].store(self, std::memory_order_release);
+				return;
+			}
+		}
+		for (int i = 0; i < MAX_ROLES; i++)
+		{
+			const char* expected = nullptr;
+			if (s_role_names[i].compare_exchange_strong(expected, role, std::memory_order_acq_rel))
+			{
+				s_role_threads[i].store(self, std::memory_order_release);
+				return;
+			}
+		}
+	}
+
+	const char* CurrentRole()
+	{
+		const std::uintptr_t self = (std::uintptr_t)pthread_self();
+		for (int i = 0; i < MAX_ROLES; i++)
+		{
+			if (s_role_threads[i].load(std::memory_order_acquire) == self)
+				return s_role_names[i].load(std::memory_order_acquire);
+		}
+		return nullptr;
+	}
+
+	// The core vm-cores.txt gives this role, or -1.
+	static int ConfiguredCore(const char* role)
+	{
+		FILE* file = std::fopen("/data/PS4SX2/vm-cores.txt", "r");
+		if (!file)
+			return -1;
+		int core = -1;
+		char line[128];
+		while (std::fgets(line, sizeof(line), file))
+		{
+			char name[16];
+			int value;
+			if (std::sscanf(line, " %15[^= \t\r\n] = %d", name, &value) == 2 && strcasecmp(name, role) == 0 &&
+				value >= 0 && value <= 7)
+				core = value;
+		}
+		std::fclose(file);
+		return core;
+	}
+
 	void PinCurrentThread(const char* role, int core)
 	{
+		RememberRole(role);
 		if (!IsEnabled())
 		{
 			std::printf("PS4 thread affinity: %s left to scheduler (disabled by marker)\n", role);
@@ -35,10 +99,18 @@ namespace PS4ThreadAffinity
 			return;
 		}
 
+		const int configured = ConfiguredCore(role);
+		const char* source = "default";
+		if (configured >= 0)
+		{
+			core = configured;
+			source = "vm-cores.txt";
+		}
+
 		const unsigned long long mask = 1ULL << core;
 		const int result = scePthreadSetaffinity(scePthreadSelf(), mask);
 		// (AI-assisted) Core placement needs proper testing across base/Pro consoles.
-		std::printf("PS4 thread affinity: %s core=%d mask=0x%llx sce_result=0x%x\n", role, core, mask, result);
+		std::printf("PS4 thread affinity: %s core=%d (%s) mask=0x%llx sce_result=0x%x\n", role, core, source, mask, result);
 		std::fflush(stdout);
 	}
 } // namespace PS4ThreadAffinity

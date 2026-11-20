@@ -26,6 +26,11 @@
 
 extern "C" char __text_start[];  // defined by the OpenOrbis link.x at the start of .text
 
+// Optional: a program can add its own state to crash.log. Called from the signal handler with
+// crash.log open as fd, after the registers (rip and fault address 0 for std::terminate), so it
+// must only use async-signal-safe calls. Weak: programs without it link as before.
+extern "C" __attribute__((weak)) void ps4_crash_report_hook(int fd, uint64_t rip, uint64_t fault_address);
+
 namespace {
 
 // FreeBSD values (the PS4 kernel's); the OpenOrbis musl headers may carry Linux ones.
@@ -116,6 +121,8 @@ void crashHandler(int sig, siginfo_t* info, void* context) {
         // arbitrary words from RSP can cross the guard page and replace the
         // original fault with a second SIGSEGV, hiding its real RIP.
         writeAll(fd, "\nstack scan skipped (bounds unavailable)\n");
+        if (ps4_crash_report_hook)
+            ps4_crash_report_hook(fd, rip, address);
         close(fd);
     }
     if (traceFd() >= 0)
@@ -139,6 +146,8 @@ void crashHandler(int sig, siginfo_t* info, void* context) {
     const int fd = open("/data/PS4SX2/crash.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
     if (fd >= 0) {
         writeFormat(fd, "\n=== %s\n", message);
+        if (ps4_crash_report_hook)
+            ps4_crash_report_hook(fd, 0, 0);
         close(fd);
     }
     if (traceFd() >= 0)

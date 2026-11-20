@@ -1145,6 +1145,15 @@ void Pcsx2Config::GSOptions::MaskUserHacks()
 	if (ManualUserHacks)
 		return;
 
+#ifdef PCSX2_PS4
+	// (AI-assisted) The PS4 frontend turns these three on as CPU-saving defaults while leaving
+	// UserHacks off (so GameDB HW fixes still apply). Without this they were wiped right here and
+	// never took effect. GameDB fixes are applied after this and can still override them.
+	const bool keep_palette_conversion = GPUPaletteConversion;
+	const bool keep_preload_frame = PreloadFrameWithGSData;
+	const bool keep_disable_partial_invalidation = UserHacks_DisablePartialInvalidation;
+#endif
+
 	UserHacks_AlignSpriteX = false;
 	UserHacks_MergePPSprite = false;
 	UserHacks_ForceEvenSpritePosition = false;
@@ -1175,6 +1184,12 @@ void Pcsx2Config::GSOptions::MaskUserHacks()
 	UserHacks_BilinearHack = GSBilinearDirtyMode::Automatic;
 	SkipDrawStart = 0;
 	SkipDrawEnd = 0;
+
+#ifdef PCSX2_PS4
+	GPUPaletteConversion = keep_palette_conversion;
+	PreloadFrameWithGSData = keep_preload_frame;
+	UserHacks_DisablePartialInvalidation = keep_disable_partial_invalidation;
+#endif
 }
 
 void Pcsx2Config::GSOptions::MaskUpscalingHacks()

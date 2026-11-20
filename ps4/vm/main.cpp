@@ -648,14 +648,18 @@ static void* RunVM(void*)
 	settings->SetBoolValue("EmuCore/GS", "HWSpinCPUForReadbacks", false);
 	// (AI-assisted) Hardware palette conversion, frame preloading, and partial invalidation bypass
 	// reduce CPU stalls in 1x/2x upscale; needs proper testing.
-	settings->SetBoolValue("EmuCore/GS", "paltex", true);
-	settings->SetBoolValue("EmuCore/GS", "preload_frame_with_gs_data", true);
+	// /data/PS4SX2/vm-no-gs-perf-defaults turns all three off again, to check if one breaks a game.
+	const bool gs_perf_defaults = access("/data/PS4SX2/vm-no-gs-perf-defaults", F_OK) != 0;
+	settings->SetBoolValue("EmuCore/GS", "paltex", gs_perf_defaults);
+	settings->SetBoolValue("EmuCore/GS", "preload_frame_with_gs_data", gs_perf_defaults);
 	// (AI-assisted) Let per-game GameDB HW fixes apply (autoFlush, halfPixelOffset, etc) to fix
 	// shadows/post-processing without forcing manual overrides. GTA SA (SLUS-20946) needs
 	// autoFlush=1 + halfPixelOffset=5. DisablePartialInvalidation=true stays as PS4 perf
 	// default when GameDB has no entry. Needs proper testing across titles.
 	settings->SetBoolValue("EmuCore/GS", "UserHacks", false);
-	settings->SetBoolValue("EmuCore/GS", "UserHacks_DisablePartialInvalidation", true);
+	settings->SetBoolValue("EmuCore/GS", "UserHacks_DisablePartialInvalidation", gs_perf_defaults);
+	ProbeLog("GS perf defaults (paltex, preload frame, no partial invalidation): %s\n",
+		gs_perf_defaults ? "on" : "off by vm-no-gs-perf-defaults marker");
 	// (AI-assisted) Triple VideoOut (ImageCount=3) with VsyncQueueSize=3 queues 2 extra frames
 	// and can show stale buffers as ghosting. Use 2 (upstream default) to reduce latency
 	// and present stalls; vsyncq was 0..1 in baseline. Needs proper testing.
@@ -853,6 +857,18 @@ static void* RunVM(void*)
 		ProbeLog("VM runtime Fastmem=%s (after initial VTLB mappings)\n",
 			EmuConfig.Cpu.Recompiler.EnableFastmem ? "on" : "off");
 		ProbeLog("VM initialized: executing BIOS; no probe MMIO shadows\n");
+		// (AI-assisted) The values in effect after config masking and GameDB fixes, so a log shows
+		// what actually ran rather than what the frontend asked for.
+		ProbeLog("Effective GS: paltex=%d preload_frame=%d disable_partial_inval=%d autoflush=%d hpo=%d "
+				 "manual_hacks=%d mipmap=%d\n",
+			EmuConfig.GS.GPUPaletteConversion ? 1 : 0, EmuConfig.GS.PreloadFrameWithGSData ? 1 : 0,
+			EmuConfig.GS.UserHacks_DisablePartialInvalidation ? 1 : 0,
+			static_cast<int>(EmuConfig.GS.UserHacks_AutoFlush), static_cast<int>(EmuConfig.GS.UserHacks_HalfPixelOffset),
+			EmuConfig.GS.ManualUserHacks ? 1 : 0, EmuConfig.GS.HWMipmap ? 1 : 0);
+		ProbeLog("Effective EE/VU: cycle_rate=%d cycle_skip=%d mtvu=%d instant_vu1=%d intc_stat=%d\n",
+			static_cast<int>(EmuConfig.Speedhacks.EECycleRate), static_cast<int>(EmuConfig.Speedhacks.EECycleSkip),
+			EmuConfig.Speedhacks.vuThread ? 1 : 0, EmuConfig.Speedhacks.vu1Instant ? 1 : 0,
+			EmuConfig.Speedhacks.IntcStat ? 1 : 0);
 		PS4Telemetry::Stage("vm-running");
 		// (AI-assisted) A DS4 has no dedicated analog-mode switch; start the emulated DS2 in analog mode.
 		Pad::SetControllerState(0, PadDualshock2::Inputs::PAD_ANALOG, 1.0f);
@@ -977,7 +993,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test1\n");
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");
 	ProbeLog("Telemetry: PC debug server target from /data/PS4SX2/telemetry.conf (create with 'host=PC_IP port=19423')\n");
