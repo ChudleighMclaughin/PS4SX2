@@ -69,6 +69,9 @@ extern bool g_ps4_vtlb_bulk_register_cache;
 extern bool g_ps4_skip_smc_checks;
 extern bool g_ps4_smc_page_protect;
 extern bool g_ps4_idle_loop_skip;
+// Wait/idle time counters (rdtsc ticks) kept by MTGS.cpp and MTVU.cpp.
+extern unsigned long long g_orbis_gs_idle_ticks, g_orbis_ee_waitgs_ticks, g_orbis_ee_stall_ticks, g_orbis_ee_vsyncq_ticks;
+extern unsigned long long g_orbis_vu_idle_ticks, g_orbis_ee_waitvu_ticks, g_orbis_ee_vuring_ticks;
 extern u64 g_ps4_idle_loop_blocks, g_ps4_idle_loop_runs, g_ps4_idle_loop_declined;
 extern std::atomic<u32> g_orbis_rec_faults;
 extern std::atomic<u32> g_ps4_mprotect_failures;
@@ -352,6 +355,30 @@ void VMHostPoll()
 			g_BP.IFC, static_cast<u32>(ipuRegs.ctrl.OFC), g_BP.BP, g_BP.FP,
 			IPUCoreStatus.WaitingOnIPUTo, IPUCoreStatus.WaitingOnIPUFrom, IPUCoreStatus.DataRequested,
 			ipu1ch.qwc, static_cast<u32>(ipu1ch.chcr.STR), ipu0ch.qwc, static_cast<u32>(ipu0ch.chcr.STR));
+		{
+			// (AI-assisted) Share of wall time each thread spent waiting, from the rdtsc counters
+			// the port already keeps. Unit-free, so no TSC frequency is needed. EE_* waits are
+			// time the EE thread was blocked on the GS or VU1 thread; *_idle is time those threads
+			// had nothing to do. Plain reads of counters other threads write: fine for a log line.
+			static unsigned long long last_tsc = 0;
+			static unsigned long long last[7] = {};
+			const unsigned long long tsc = __builtin_ia32_rdtsc();
+			const unsigned long long now_counts[7] = {g_orbis_ee_waitgs_ticks, g_orbis_ee_stall_ticks, g_orbis_ee_waitvu_ticks,
+				g_orbis_ee_vuring_ticks, g_orbis_gs_idle_ticks, g_orbis_vu_idle_ticks, g_orbis_ee_vsyncq_ticks};
+			if (last_tsc != 0 && tsc > last_tsc)
+			{
+				const double wall = static_cast<double>(tsc - last_tsc);
+				double pct[7];
+				for (int i = 0; i < 7; i++)
+					pct[i] = 100.0 * static_cast<double>(now_counts[i] - last[i]) / wall;
+				ProbeLog("Thread waits (pct of wall time): EE_wait_GS=%.1f EE_GS_ring_full=%.1f EE_wait_VU1=%.1f "
+						 "EE_VU1_ring_full=%.1f EE_GS_frames_behind=%.1f GS_idle=%.1f VU1_idle=%.1f\n",
+					pct[0], pct[1], pct[2], pct[3], pct[6], pct[4], pct[5]);
+			}
+			last_tsc = tsc;
+			for (int i = 0; i < 7; i++)
+				last[i] = now_counts[i];
+		}
 		PS4Audio::LogStatus();
 		PS4ProbeLogger::LogStatus();
 		// Do not attribute host logging/control work to the following guest gap.
@@ -1016,7 +1043,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test3\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test4\n");
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");
 	ProbeLog("Telemetry: PC debug server target from /data/PS4SX2/telemetry.conf (create with 'host=PC_IP port=19423')\n");
