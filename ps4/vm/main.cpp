@@ -75,6 +75,7 @@ extern bool g_ps4_vtlb_bulk_register_cache;
 extern bool g_ps4_skip_smc_checks;
 extern bool g_ps4_smc_page_protect;
 extern bool g_ps4_idle_loop_skip;
+extern bool g_ps4_iop_batch; // R5900.cpp
 // (AI-assisted) perf-test7: the PS5 port's EE fast paths (OrbisCompatPS4.cpp, PlatformVM.cpp).
 extern std::atomic<int> g_orbis_hle_tid, g_orbis_eret_fast, g_orbis_vif1_fuse, g_orbis_vif_fast, g_orbis_hle_flush, g_orbis_pfw;
 extern std::atomic<int> g_orbis_mtvu_batch; // MTVU.cpp
@@ -872,6 +873,9 @@ static void* RunVM(void*)
 								 "off (opt in with /data/PS4SX2/vm-smc-pageprot)");
 	// (AI-assisted) Opt-in: pure EE wait loops jump to the next event instead of spinning.
 	g_ps4_idle_loop_skip = access("/data/PS4SX2/vm-ee-idle-skip", F_OK) == 0;
+	// (AI-assisted) perf-test23: opt-in bigger IOP slices (R5900.cpp, kPS4IopBatchCycles).
+	g_ps4_iop_batch = access("/data/PS4SX2/vm-iop-batch", F_OK) == 0;
+	ProbeLog("IOP batching: %s\n", g_ps4_iop_batch ? "enabled by /data/PS4SX2/vm-iop-batch" : "off (opt in with /data/PS4SX2/vm-iop-batch)");
 	ProbeLog("EE idle loop skip: %s\n", g_ps4_idle_loop_skip ? "enabled by /data/PS4SX2/vm-ee-idle-skip" :
 															  "off (opt in with /data/PS4SX2/vm-ee-idle-skip)");
 	// (AI-assisted) perf-test7: the PS5 port's EE fast paths, off by default on PS4.
@@ -1142,7 +1146,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test22\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test23\n");
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");
 	ProbeLog("Telemetry: PC debug server target from /data/PS4SX2/telemetry.conf (create with 'host=PC_IP port=19423')\n");

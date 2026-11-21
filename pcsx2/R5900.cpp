@@ -10,6 +10,7 @@
 #include "ps2/BiosTools.h"
 #include "R5900.h"
 #include "R3000A.h"
+#include "IopHw.h" // (AI-assisted) perf-test23: HW_ISTAT/HW_IMASK for vm-iop-batch
 #include "ps2/pgif.h" // pgif init
 #include "VUmicro.h"
 #include "COP0.h"
@@ -426,6 +427,13 @@ static __fi void OrbisPrefetchEventLines()
 static u32 s_orbis_ratio_psxclk = 0;
 static float s_orbis_ratio = 8.0f;
 
+// (AI-assisted) perf-test23: opt-in (vm-iop-batch, ps4/vm/main.cpp). The IOP runs in bigger slices: an event
+// test leaves it alone while it is less than kPS4IopBatchCycles EE cycles behind, has no timed event of its
+// own inside that lag and no interrupt pending, so roughly every other IOP slice (enter/exit of its
+// recompiled code plus iopEventTest) is skipped. The IOP can lag the EE by up to that much more than before.
+bool g_ps4_iop_batch = false;
+static constexpr s32 kPS4IopBatchCycles = 2048;
+
 // Shared portion of the branch test, called from both the Interpreter
 // and the recompiler.  (moved here to help alleviate redundant code)
 __fi void _cpuEventTest_Shared()
@@ -471,7 +479,13 @@ __fi void _cpuEventTest_Shared()
 	if (EEsCycle > 0)
 		iopEventAction = true;
 
-	if (iopEventAction)
+	// Signed gap: an overdue IOP event (gap <= 0) never defers.
+	const s64 ps4_iop_gap = static_cast<s64>(psxRegs.iopNextEventCycle - psxRegs.cycle);
+	const bool ps4_iop_defer = g_ps4_iop_batch && EEsCycle > 0 && EEsCycle < kPS4IopBatchCycles &&
+		ps4_iop_gap > 0 && static_cast<float>(EEsCycle) < static_cast<float>(ps4_iop_gap) * s_orbis_ratio &&
+		psxRegs.interrupt == 0 && (psxHu32(HW_ISTAT) & psxHu32(HW_IMASK)) == 0; // perf-test23
+
+	if (!ps4_iop_defer && iopEventAction)
 	{
 		//if( EEsCycle < -450 )
 		//	Console.WriteLn( " IOP ahead by: %d cycles", -EEsCycle );
@@ -486,6 +500,7 @@ __fi void _cpuEventTest_Shared()
 		iopEventAction = false;
 	}
 
+	if (!ps4_iop_defer)
 	{
 #if defined(PCSX2_PS4_VM_BOOT)
 		PS4EEEventProfile::SubScope sub_scope(PS4EEEventProfile::SubPhase::IOPEventTest);
