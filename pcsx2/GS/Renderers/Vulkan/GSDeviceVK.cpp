@@ -6,6 +6,7 @@
 #include "GS/GSGL.h"
 #include "GS/GSPerfMon.h"
 #include "ps4/core/GSProfilePS4.h"
+#include "ps4/core/VKReplayPS4.h" // (AI-assisted) perf-test12
 #include "GS/GSUtil.h"
 #include "GS/Renderers/Vulkan/GSDeviceVK.h"
 #include "GS/Renderers/Vulkan/VKBuilders.h"
@@ -784,6 +785,9 @@ bool GSDeviceVK::CreateDevice(VkSurfaceKHR surface, bool enable_validation_layer
 	// With the device created, we can fill the remaining entry points.
 	if (!Vulkan::LoadVulkanDeviceFunctions(m_device))
 		return false;
+#ifdef PCSX2_PS4
+	PS4VkReplay::Install(); // (AI-assisted) perf-test12: before VMA and everything else reads the entry points
+#endif
 
 	// Grab the graphics and present queues.
 	vkGetDeviceQueue(m_device, m_graphics_queue_family_index, 0, &m_graphics_queue);
