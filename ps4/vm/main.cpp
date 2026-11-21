@@ -73,6 +73,8 @@ extern bool g_ps4_idle_loop_skip;
 // (AI-assisted) perf-test7: the PS5 port's EE fast paths (OrbisCompatPS4.cpp, PlatformVM.cpp).
 extern std::atomic<int> g_orbis_hle_tid, g_orbis_eret_fast, g_orbis_vif1_fuse, g_orbis_vif_fast, g_orbis_hle_flush, g_orbis_pfw;
 extern u64 g_orbis_tid_hits, g_orbis_tid_checks, g_orbis_tid_mismatches, g_orbis_eret_skips, g_orbis_vif1_fused, g_orbis_hle_flushes;
+extern bool g_ps4_vif1_batch; // (AI-assisted) perf-test10 (Vif1_Dma.cpp)
+extern u64 g_ps4_vif1_batched;
 extern u64 g_orbis_eret_block[4];
 // Wait/idle time counters (rdtsc ticks) kept by MTGS.cpp and MTVU.cpp.
 extern unsigned long long g_orbis_gs_idle_ticks, g_orbis_ee_waitgs_ticks, g_orbis_ee_stall_ticks, g_orbis_ee_vsyncq_ticks;
@@ -410,12 +412,13 @@ void VMHostPoll()
 				static_cast<unsigned long long>(st.dma4), static_cast<unsigned long long>(st.dma7));
 		}
 		ProbeLog("EE PS5 fast paths cumulative: tid_hits=%llu tid_checks=%llu tid_mismatches=%llu eret_skips=%llu "
-				 "eret_kept_intc=%llu dmac=%llu timer=%llu vu0=%llu vif1_fused=%llu hle_flushes=%llu\n",
+				 "eret_kept_intc=%llu dmac=%llu timer=%llu vu0=%llu vif1_fused=%llu hle_flushes=%llu vif1_batched=%llu\n",
 			static_cast<unsigned long long>(g_orbis_tid_hits), static_cast<unsigned long long>(g_orbis_tid_checks),
 			static_cast<unsigned long long>(g_orbis_tid_mismatches), static_cast<unsigned long long>(g_orbis_eret_skips),
 			static_cast<unsigned long long>(g_orbis_eret_block[0]), static_cast<unsigned long long>(g_orbis_eret_block[1]),
 			static_cast<unsigned long long>(g_orbis_eret_block[2]), static_cast<unsigned long long>(g_orbis_eret_block[3]),
-			static_cast<unsigned long long>(g_orbis_vif1_fused), static_cast<unsigned long long>(g_orbis_hle_flushes));
+			static_cast<unsigned long long>(g_orbis_vif1_fused), static_cast<unsigned long long>(g_orbis_hle_flushes),
+			static_cast<unsigned long long>(g_ps4_vif1_batched));
 		ProbeLog("EE idle loops: loops=%llu skips=%llu callback_busy=%llu\n",
 			static_cast<unsigned long long>(g_ps4_idle_loop_blocks), static_cast<unsigned long long>(g_ps4_idle_loop_runs),
 			static_cast<unsigned long long>(g_ps4_idle_loop_declined));
@@ -870,6 +873,10 @@ static void* RunVM(void*)
 		access("/data/PS4SX2/vm-no-thread-affinity", F_OK) != 0;
 	ProbeLog("SPU2 worker thread: %s\n", SPU2Thread::g_enabled ? "enabled by /data/PS4SX2/vm-spu2-thread (core 1 unless vm-cores.txt sets SPU2)" :
 															  "off (opt in with /data/PS4SX2/vm-spu2-thread)");
+	// (AI-assisted) perf-test10: opt-in VIF1 chain passes run back to back, cycles charged at the end.
+	g_ps4_vif1_batch = access("/data/PS4SX2/vm-vif1-batch", F_OK) == 0;
+	ProbeLog("VIF1 pass batching: %s\n", g_ps4_vif1_batch ? "enabled by /data/PS4SX2/vm-vif1-batch (up to 4096 cycles per batch)" :
+															"off (opt in with /data/PS4SX2/vm-vif1-batch)");
 	// (AI-assisted) Exact SMC mode must inspect code on every loop iteration.
 	g_ps4_bytecopy_fusion = g_ps4_skip_smc_checks && access("/data/PS4SX2/vm-no-bytecopy-fusion", F_OK) != 0;
 	g_ps4_bytecopy_blocks = g_ps4_bytecopy_runs = g_ps4_bytecopy_bytes = 0;
@@ -921,6 +928,7 @@ static void* RunVM(void*)
 		g_orbis_hle_flush.store(0, std::memory_order_relaxed);
 		g_orbis_pfw.store(0, std::memory_order_relaxed);
 		SPU2Thread::g_enabled = false;
+		g_ps4_vif1_batch = false;
 #endif
 		// Still before VM reset and the first guest instruction. Updating the base
 		// layer also preserves the profile when menu settings are reapplied later.
@@ -1099,7 +1107,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test9\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test10\n");
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");
 	ProbeLog("Telemetry: PC debug server target from /data/PS4SX2/telemetry.conf (create with 'host=PC_IP port=19423')\n");

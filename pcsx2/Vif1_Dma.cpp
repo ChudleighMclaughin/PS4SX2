@@ -329,8 +329,26 @@ static __fi bool OrbisVif1Fuse()
 		   dmacRegs.ctrl.DMAE && !(psHu8(DMAC_ENABLER + 2) & 1) && g_orbis_vif1_fuse.load(std::memory_order_relaxed);
 }
 
+// (AI-assisted) perf-test10: opt-in (vm-vif1-batch). Outside the Instant DMA loop, run the chain's next
+// pass now instead of scheduling it, and charge the skipped passes' cycles to the CPU_INT scheduled after
+// the last one, so the transfer still ends (and raises its IRQ) at the same cycle. Each skipped pass saves
+// an EE event test and the IOP slice that comes with it. Only plain passes: no VIF IRQ/stall, not waiting
+// on VU1 or GIF, chain not at its end, no other EE interrupt pending, and at most kVif1BatchCycles of
+// skipped time, so data never reaches VU1/GS much earlier than it would.
+bool g_ps4_vif1_batch = false;
+u64 g_ps4_vif1_batched = 0;
+static constexpr u32 kVif1BatchCycles = 4096; // well under one scanline (~18,700 EE cycles)
+static __fi bool PS4Vif1Batch(u32 batched)
+{
+	return g_ps4_vif1_batch && cpuRegs.interrupt == 0 && !(cpuRegs.dmastall & (1u << DMAC_VIF1)) &&
+		   dmacRegs.ctrl.DMAE && !(psHu8(DMAC_ENABLER + 2) & 1) && vif1ch.chcr.DIR && !vif1.irq &&
+		   !vif1.vifstalled.enabled && !vif1Regs.stat.VGW && !(vif1.done && vif1ch.qwc == 0) &&
+		   batched + g_vif1Cycles <= kVif1BatchCycles;
+}
+
 __fi void vif1Interrupt()
 {
+  u32 batched = 0; // perf-test10: cycles of the passes PS4Vif1Batch ran early
   for (;;) // vk-285-100: the passes OrbisVif1Fuse lets go on in place
   {
 	VIF_LOG("vif1Interrupt: %8.8llx chcr %x, done %x, qwc %x", cpuRegs.cycle, vif1ch.chcr._u32, vif1.done, vif1ch.qwc);
@@ -459,7 +477,7 @@ __fi void vif1Interrupt()
 			{
 				//if (cpuGetCycles(VU_MTVU_BUSY) > static_cast<int>(g_vif1Cycles))
 				//	DevCon.Warning("Waiting %d instead of %d", cpuGetCycles(VU_MTVU_BUSY), static_cast<int>(g_vif1Cycles));
-				CPU_INT(DMAC_VIF1, std::max(static_cast<int>(g_vif1Cycles), cpuGetCycles(VU_MTVU_BUSY)));
+				CPU_INT(DMAC_VIF1, std::max(static_cast<int>(g_vif1Cycles + batched), cpuGetCycles(VU_MTVU_BUSY)));
 			}
 			else
 			{
@@ -468,7 +486,13 @@ __fi void vif1Interrupt()
 					g_orbis_vif1_fused++;
 					continue;
 				}
-				CPU_INT(DMAC_VIF1, g_vif1Cycles);
+				if (PS4Vif1Batch(batched)) // perf-test10
+				{
+					batched += g_vif1Cycles;
+					g_ps4_vif1_batched++;
+					continue;
+				}
+				CPU_INT(DMAC_VIF1, g_vif1Cycles + batched);
 			}
 		}
 		return;
@@ -494,7 +518,7 @@ __fi void vif1Interrupt()
 			{
 				//if (cpuGetCycles(VU_MTVU_BUSY) > static_cast<int>(g_vif1Cycles))
 				//	DevCon.Warning("Waiting %d instead of %d", cpuGetCycles(VU_MTVU_BUSY), static_cast<int>(g_vif1Cycles));
-				CPU_INT(DMAC_VIF1, std::max(static_cast<int>(g_vif1Cycles), cpuGetCycles(VU_MTVU_BUSY)));
+				CPU_INT(DMAC_VIF1, std::max(static_cast<int>(g_vif1Cycles + batched), cpuGetCycles(VU_MTVU_BUSY)));
 			}
 			else
 			{
@@ -503,7 +527,13 @@ __fi void vif1Interrupt()
 					g_orbis_vif1_fused++;
 					continue;
 				}
-				CPU_INT(DMAC_VIF1, g_vif1Cycles);
+				if (PS4Vif1Batch(batched)) // perf-test10
+				{
+					batched += g_vif1Cycles;
+					g_ps4_vif1_batched++;
+					continue;
+				}
+				CPU_INT(DMAC_VIF1, g_vif1Cycles + batched);
 			}
 		}
 		return;
