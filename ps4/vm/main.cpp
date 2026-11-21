@@ -75,7 +75,7 @@ extern bool g_ps4_vtlb_bulk_register_cache;
 extern bool g_ps4_skip_smc_checks;
 extern bool g_ps4_smc_page_protect;
 extern bool g_ps4_idle_loop_skip;
-extern bool g_ps4_iop_batch; // R5900.cpp
+extern bool g_ps4_iop_batch, g_ps4_iop_batch_loose; // R5900.cpp
 extern int g_ps4_iop_batch_cycles; // R5900.cpp (s32)
 // (AI-assisted) perf-test7: the PS5 port's EE fast paths (OrbisCompatPS4.cpp, PlatformVM.cpp).
 extern std::atomic<int> g_orbis_hle_tid, g_orbis_eret_fast, g_orbis_vif1_fuse, g_orbis_vif_fast, g_orbis_hle_flush, g_orbis_pfw;
@@ -887,9 +887,12 @@ static void* RunVM(void*)
 		}
 		std::fclose(f);
 	}
-	ProbeLog("IOP batching: %s, lag limit %d EE cycles\n",
+	// (AI-assisted) perf-test25: vm-iop-batch-loose also lets IOP timer events run late (turns batching on too).
+	g_ps4_iop_batch_loose = access("/data/PS4SX2/vm-iop-batch-loose", F_OK) == 0;
+	g_ps4_iop_batch = g_ps4_iop_batch || g_ps4_iop_batch_loose;
+	ProbeLog("IOP batching: %s, lag limit %d EE cycles%s\n",
 		g_ps4_iop_batch ? "enabled (vm-iop-batch or vm-iop-batch.txt)" : "off (opt in with /data/PS4SX2/vm-iop-batch)",
-		g_ps4_iop_batch_cycles);
+		g_ps4_iop_batch_cycles, g_ps4_iop_batch_loose ? ", loose (vm-iop-batch-loose)" : "");
 	ProbeLog("EE idle loop skip: %s\n", g_ps4_idle_loop_skip ? "enabled by /data/PS4SX2/vm-ee-idle-skip" :
 															  "off (opt in with /data/PS4SX2/vm-ee-idle-skip)");
 	// (AI-assisted) perf-test7: the PS5 port's EE fast paths, off by default on PS4.
@@ -1160,7 +1163,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test24\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test25\n");
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");
 	ProbeLog("Telemetry: PC debug server target from /data/PS4SX2/telemetry.conf (create with 'host=PC_IP port=19423')\n");

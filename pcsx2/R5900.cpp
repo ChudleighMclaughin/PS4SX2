@@ -432,6 +432,7 @@ static float s_orbis_ratio = 8.0f;
 // own inside that lag and no interrupt pending, so roughly every other IOP slice (enter/exit of its
 // recompiled code plus iopEventTest) is skipped. The IOP can lag the EE by up to that much more than before.
 bool g_ps4_iop_batch = false;
+bool g_ps4_iop_batch_loose = false; // perf-test25: vm-iop-batch-loose (ps4/vm/main.cpp)
 s32 g_ps4_iop_batch_cycles = 2048; // perf-test24: vm-iop-batch.txt (ps4/vm/main.cpp) can change it
 
 // Shared portion of the branch test, called from both the Interpreter
@@ -481,9 +482,13 @@ __fi void _cpuEventTest_Shared()
 
 	// Signed gap: an overdue IOP event (gap <= 0) never defers.
 	const s64 ps4_iop_gap = static_cast<s64>(psxRegs.iopNextEventCycle - psxRegs.cycle);
+	// perf-test25: vm-iop-batch-loose also defers past the IOP's own timed events (they run up to the lag limit
+	// late); only a pending IOP interrupt forces the slice.
 	const bool ps4_iop_defer = g_ps4_iop_batch && EEsCycle > 0 && EEsCycle < g_ps4_iop_batch_cycles &&
-		ps4_iop_gap > 0 && static_cast<float>(EEsCycle) < static_cast<float>(ps4_iop_gap) * s_orbis_ratio &&
-		psxRegs.interrupt == 0 && (psxHu32(HW_ISTAT) & psxHu32(HW_IMASK)) == 0; // perf-test23
+		(g_ps4_iop_batch_loose ||
+			(ps4_iop_gap > 0 && static_cast<float>(EEsCycle) < static_cast<float>(ps4_iop_gap) * s_orbis_ratio &&
+				psxRegs.interrupt == 0)) &&
+		(psxHu32(HW_ISTAT) & psxHu32(HW_IMASK)) == 0; // perf-test23
 
 	if (!ps4_iop_defer && iopEventAction)
 	{
@@ -566,7 +571,12 @@ __fi void _cpuEventTest_Shared()
 	const int nextIopEventDeta = ((psxRegs.iopNextEventCycle - psxRegs.cycle) * mutiplier);
 	// 8 or more cycles behind and there's an event scheduled
 	g_orbis_ee_evtests.store(g_orbis_ee_evtests.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed); // vk-285-90
-	if (EEsCycle >= nextIopEventDeta)
+	if (ps4_iop_defer && g_ps4_iop_batch_loose)
+	{
+		// perf-test25: the deferred slice runs once the lag reaches the limit, not 48 cycles on.
+		cpuSetNextEventDelta(std::max<s32>(48, g_ps4_iop_batch_cycles - EEsCycle));
+	}
+	else if (EEsCycle >= nextIopEventDeta)
 	{
 		// EE's running way ahead of the IOP still, so we should branch quickly to give the
 		// IOP extra timeslices in short order.
