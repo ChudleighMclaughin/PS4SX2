@@ -32,6 +32,7 @@
 #include <thread>
 #include <mutex>
 #include <unistd.h> // (AI-assisted) perf-test21: access() for vm-gs-frameskip
+#include "common/Console.h"
 
 extern bool g_ps4_gs_skip_draws; // GSState.cpp
 
