@@ -73,6 +73,9 @@
 #include <atomic>
 #include <mutex>
 #include <sstream>
+#ifndef _WIN32
+#include <unistd.h> // (AI-assisted) perf-test22: access() for vm-instant-dma
+#endif
 #include <common/RedtapeWilCom.h>
 extern "C" void orbis_stage(const char* stage) __attribute__((weak));
 
@@ -762,6 +765,16 @@ void VMManager::ApplyGameFixes()
 		EmuConfig.GS.ManualUserHacks = false;
 		return;
 	}
+
+#ifndef _WIN32
+	// (AI-assisted) perf-test22: opt-in Instant DMA for every game (R5900.cpp runs pending DMA passes in one
+	// loop instead of one EE event each; also turns on the vm-vif1-fuse path). Timing changes: test per game.
+	if (access("/data/PS4SX2/vm-instant-dma", F_OK) == 0)
+	{
+		EmuConfig.Gamefixes.InstantDMAHack = true;
+		Console.WriteLn("PS4: Instant DMA on (/data/PS4SX2/vm-instant-dma)");
+	}
+#endif
 
 	const GameDatabaseSchema::GameEntry* game = GameDatabase::findGame(s_disc_serial);
 	if (!game)
