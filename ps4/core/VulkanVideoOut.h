@@ -72,6 +72,8 @@ namespace PS4Port
 
 	private:
 		void Log(const char* format, ...) const;
+		void RefreshPendingFlips();
+		bool WaitForPendingBelow(std::uint32_t extra, std::uint32_t limit, OrbisKernelUseconds timeout);
 		struct ImageMemory
 		{
 			VkImage image = VK_NULL_HANDLE;

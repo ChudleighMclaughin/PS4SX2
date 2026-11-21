@@ -169,22 +169,45 @@ bool PS4Port::VulkanVideoOut::Create()
 	return m_buffer_set >= 0;
 }
 
-bool PS4Port::VulkanVideoOut::WaitForFlip(OrbisKernelUseconds timeout)
+// (AI-assisted) perf-test18: flip events coalesce (two flips finishing before a read give one event), so
+// counting events drifted: pending stayed at 1 with nothing pending, and perf-test17's queue, which waits at
+// pending + unflipped >= 2, then waited 5 s per frame. The system's own pending count can't drift.
+void PS4Port::VulkanVideoOut::RefreshPendingFlips()
 {
-	while (m_pending_flips > 0)
+	OrbisVideoOutFlipStatus status{};
+	if (m_handle >= 0 && sceVideoOutGetFlipStatus(m_handle, &status) == 0 && status.numFlipPending >= 0)
+		m_pending_flips = static_cast<std::uint32_t>(status.numFlipPending);
+}
+
+// Waits until pending flips + extra < limit, sleeping on the flip queue in short slices.
+bool PS4Port::VulkanVideoOut::WaitForPendingBelow(std::uint32_t extra, std::uint32_t limit, OrbisKernelUseconds timeout)
+{
+	RefreshPendingFlips();
+	OrbisKernelUseconds waited = 0;
+	while (m_pending_flips + extra >= limit)
 	{
-		OrbisKernelEvent event{};
-		int count = 0;
-		OrbisKernelUseconds current_timeout = timeout;
-		const int result = sceKernelWaitEqueue(m_flip_queue, &event, 1, &count, &current_timeout);
-		if (result != 0 || count != 1)
+		if (waited >= timeout)
 		{
-			Log("VideoOut: flip wait failed: %#x count=%d frame=%llu pending=%u", result, count,
-				static_cast<unsigned long long>(m_frame_count), m_pending_flips);
+			Log("VideoOut: flip wait failed: frame=%llu pending=%u unflipped=%u", static_cast<unsigned long long>(m_frame_count),
+				m_pending_flips, extra);
 			return false;
 		}
-		m_pending_flips--;
+		OrbisKernelEvent event{};
+		int count = 0;
+		OrbisKernelUseconds slice = 20000;
+		sceKernelWaitEqueue(m_flip_queue, &event, 1, &count, &slice);
+		if (count == 1 && m_pending_flips > 0)
+			m_pending_flips--; // fallback if the status call fails; overwritten below when it works
+		RefreshPendingFlips();
+		waited += 20000;
 	}
+	return true;
+}
+
+bool PS4Port::VulkanVideoOut::WaitForFlip(OrbisKernelUseconds timeout)
+{
+	if (!WaitForPendingBelow(0, 1, timeout))
+		return false;
 	m_flip_pending = false;
 	return true;
 }
@@ -201,40 +224,22 @@ bool PS4Port::VulkanVideoOut::Acquire(std::uint32_t unflipped)
 		return false;
 	}
 
-	// (AI-assisted) Non-blocking poll: drain any flips that have completed at VSync.
-	while (m_pending_flips > 0)
+	// (AI-assisted) Drain completed-flip events without blocking, so the queue doesn't fill up.
+	for (;;)
 	{
 		OrbisKernelEvent event{};
 		int count = 0;
 		OrbisKernelUseconds timeout = 0;
-		const int result = sceKernelWaitEqueue(m_flip_queue, &event, 1, &count, &timeout);
-		if (result == 0 && count == 1)
-		{
-			m_pending_flips--;
-		}
-		else
-		{
+		if (sceKernelWaitEqueue(m_flip_queue, &event, 1, &count, &timeout) != 0 || count != 1)
 			break;
-		}
+		if (m_pending_flips > 0)
+			m_pending_flips--;
 	}
 
 	// (AI-assisted) With triple buffering, wait only when all pipelined buffers
-	// are in flight (pending >= ImageCount - 1), decoupling rendering from VSync.
-	// Needs proper testing across console display rates.
-	while (m_pending_flips + unflipped >= (ImageCount - 1))
-	{
-		OrbisKernelEvent event{};
-		int count = 0;
-		OrbisKernelUseconds timeout = 5000000;
-		const int result = sceKernelWaitEqueue(m_flip_queue, &event, 1, &count, &timeout);
-		if (result != 0 || count != 1)
-		{
-			Log("VideoOut: flip wait failed: %#x count=%d frame=%llu pending=%u", result, count,
-				static_cast<unsigned long long>(m_frame_count), m_pending_flips);
-			return false;
-		}
-		m_pending_flips--;
-	}
+	// are in flight (pending + unflipped >= ImageCount - 1), decoupling rendering from VSync.
+	if (!WaitForPendingBelow(unflipped, ImageCount - 1, 5000000))
+		return false;
 
 	m_flip_pending = (m_pending_flips > 0);
 	m_current_index = static_cast<std::uint32_t>(m_acquire_count % ImageCount);
