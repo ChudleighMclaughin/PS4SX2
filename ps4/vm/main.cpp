@@ -421,7 +421,7 @@ void VMHostPoll()
 			static_cast<unsigned long long>(g_orbis_eret_block[2]), static_cast<unsigned long long>(g_orbis_eret_block[3]),
 			static_cast<unsigned long long>(g_orbis_vif1_fused), static_cast<unsigned long long>(g_orbis_hle_flushes),
 			static_cast<unsigned long long>(g_ps4_vif1_batched));
-		if (PS4VkReplay::g_count) // (AI-assisted) perf-test12
+		if (PS4VkReplay::g_count || PS4VkReplay::g_replay) // (AI-assisted) perf-test12/13
 		{
 			char replay_line[512];
 			PS4VkReplay::FormatStats(replay_line, sizeof(replay_line));
@@ -1120,7 +1120,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test12\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test13\n");
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");
 	ProbeLog("Telemetry: PC debug server target from /data/PS4SX2/telemetry.conf (create with 'host=PC_IP port=19423')\n");
