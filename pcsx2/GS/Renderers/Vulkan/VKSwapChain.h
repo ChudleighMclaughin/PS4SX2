@@ -87,6 +87,14 @@ public:
 	bool PresentCurrentImage();
 	void ReleaseCurrentImage();
 	void ResetImageAcquireResult();
+#if defined(PCSX2_PS4)
+	// (AI-assisted) perf-test17: the deferred-flip queue. Detach hands the acquired image to the queue and returns
+	// its index; the next AcquireNextImage takes a new buffer. PS4PresentImage flips a queued image,
+	// PS4DropImage forgets one (failed submission).
+	u32 PS4DetachCurrentImage();
+	bool PS4PresentImage(u32 index);
+	void PS4DropImage();
+#endif
 
 	bool RecreateSurface(const WindowInfo& new_wi);
 	bool ResizeSwapChain(u32 new_width = 0, u32 new_height = 0, float new_scale = 1.0f);
@@ -134,5 +142,6 @@ private:
 #if defined(PCSX2_PS4)
 	std::unique_ptr<PS4Port::VulkanVideoOut> m_video_out;
 	bool m_is_video_out = false;
+	u32 m_ps4_unflipped = 0; // perf-test17: detached images not yet flipped or dropped
 #endif
 };

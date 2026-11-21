@@ -189,10 +189,17 @@ bool PS4Port::VulkanVideoOut::WaitForFlip(OrbisKernelUseconds timeout)
 	return true;
 }
 
-bool PS4Port::VulkanVideoOut::Acquire()
+bool PS4Port::VulkanVideoOut::Acquire(std::uint32_t unflipped)
 {
 	if (m_buffer_set < 0)
 		return false;
+	// perf-test17: the caller keeps at most one rendered-but-unflipped image when acquiring; more could hand
+	// out a buffer that is still on screen, and no flip event would ever free it.
+	if (unflipped >= ImageCount - 1)
+	{
+		Log("VideoOut: acquire with %u unflipped images refused", unflipped);
+		return false;
+	}
 
 	// (AI-assisted) Non-blocking poll: drain any flips that have completed at VSync.
 	while (m_pending_flips > 0)
@@ -214,7 +221,7 @@ bool PS4Port::VulkanVideoOut::Acquire()
 	// (AI-assisted) With triple buffering, wait only when all pipelined buffers
 	// are in flight (pending >= ImageCount - 1), decoupling rendering from VSync.
 	// Needs proper testing across console display rates.
-	while (m_pending_flips >= (ImageCount - 1))
+	while (m_pending_flips + unflipped >= (ImageCount - 1))
 	{
 		OrbisKernelEvent event{};
 		int count = 0;
@@ -230,27 +237,38 @@ bool PS4Port::VulkanVideoOut::Acquire()
 	}
 
 	m_flip_pending = (m_pending_flips > 0);
-	m_current_index = static_cast<std::uint32_t>(m_frame_count % ImageCount);
+	m_current_index = static_cast<std::uint32_t>(m_acquire_count % ImageCount);
+	m_acquire_count++;
 	m_acquired = true;
 	return true;
 }
 
 bool PS4Port::VulkanVideoOut::Present()
 {
-	if (!m_acquired || m_buffer_set < 0)
+	if (!m_acquired)
 		return false;
-	const int result = sceVideoOutSubmitFlip(m_handle, static_cast<int>(m_current_index), ORBIS_VIDEO_OUT_FLIP_VSYNC,
+	if (!PresentIndex(m_current_index))
+		return false;
+	m_acquired = false;
+	return true;
+}
+
+// (AI-assisted) perf-test17: flips a given buffer, so a queued image can be flipped after a newer acquire.
+bool PS4Port::VulkanVideoOut::PresentIndex(std::uint32_t index)
+{
+	if (m_buffer_set < 0 || index >= ImageCount)
+		return false;
+	const int result = sceVideoOutSubmitFlip(m_handle, static_cast<int>(index), ORBIS_VIDEO_OUT_FLIP_VSYNC,
 		static_cast<std::int64_t>(m_frame_count));
 	if (result != 0)
 	{
-		Log("VideoOut: flip failed: %#x buffer=%u frame=%llu", result, m_current_index,
+		Log("VideoOut: flip failed: %#x buffer=%u frame=%llu", result, index,
 			static_cast<unsigned long long>(m_frame_count));
 		return false;
 	}
 	m_frame_count++;
 	m_pending_flips++;
 	m_flip_pending = true;
-	m_acquired = false;
 	return true;
 }
 
@@ -334,6 +352,7 @@ bool PS4Port::VulkanVideoOut::Destroy()
 		image = {};
 	}
 	m_frame_count = 0;
+	m_acquire_count = 0;
 	m_current_index = 0;
 	m_pixel_pitch = 0;
 	m_flip_pending = false;

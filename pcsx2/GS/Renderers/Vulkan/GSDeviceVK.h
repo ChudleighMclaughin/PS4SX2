@@ -300,12 +300,19 @@ private:
 #if defined(PCSX2_PS4)
 	// (AI-assisted) A presented frame's VideoOut flip, submitted once its command buffer completes.
 	// GS thread only. Disabled by /data/PS4SX2/vm-sync-flip.
-	u64 m_ps4_flip_fence_counter = 0;
-	u32 m_ps4_flip_index = 0;
+	// (AI-assisted) perf-test17: a queue, oldest first. One entry unless /data/PS4SX2/vm-gs-flip-queue lets
+	// BeginPresent go on with one frame still unflipped (two entries at most).
+	struct PS4PendingFlip
+	{
+		u64 fence_counter;
+		u32 image_index;
+	};
+	PS4PendingFlip m_ps4_flips[2] = {};
+	u32 m_ps4_flip_count = 0;
 	u32 m_ps4_flip_polls = 0;
 	bool m_ps4_async_flip = true;
 	bool m_ps4_defer_next_flip = false;
-	bool m_ps4_flip_deferred = false;
+	bool m_ps4_flip_queue = false;
 	// (AI-assisted) perf-test14: /data/PS4SX2/vm-gs-skip-nowait; a skipped (duplicate) frame only polls the pending flip.
 	bool m_ps4_skip_nowait = false;
 #endif
@@ -603,7 +610,9 @@ public:
 	// (AI-assisted) Submits the deferred VideoOut flip when its frame has finished on the GPU.
 	// timeout_ns: 0 polls, UINT64_MAX blocks. Returns true when no flip remains deferred.
 	bool PS4CompleteDeferredFlip(u64 timeout_ns);
-	bool PS4HasDeferredFlip() const { return m_ps4_flip_deferred; }
+	// Flips the oldest queued frame once it has finished; false if it hasn't and block is false.
+	bool PS4CompleteOldestFlip(bool block);
+	bool PS4HasDeferredFlip() const { return m_ps4_flip_count != 0; }
 #endif
 
 	bool SetGPUTimingEnabled(bool enabled) override;

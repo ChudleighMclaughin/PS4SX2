@@ -45,9 +45,21 @@ namespace PS4Port
 		VulkanVideoOut& operator=(const VulkanVideoOut&) = delete;
 
 		bool Create();
-		bool Acquire();
+		// (AI-assisted) perf-test17: `unflipped` = acquired images already rendered (queued on the GPU) whose
+		// flip isn't submitted yet. Buffers rotate by acquire count, and with 3 buffers an acquire is safe while
+		// unflipped + pending flips <= 1 (the buffer taken was used three acquires ago and has left the screen).
+		bool Acquire(std::uint32_t unflipped = 0);
 		bool Present();
-		void Release() { m_acquired = false; }
+		bool PresentIndex(std::uint32_t index);
+		// Undo an acquire that won't be flipped.
+		void Release()
+		{
+			if (m_acquired)
+				m_acquire_count--;
+			m_acquired = false;
+		}
+		// The acquired image goes to the flip queue (PresentIndex later); the next Acquire takes the next buffer.
+		void Detach() { m_acquired = false; }
 		bool WaitForFlip(OrbisKernelUseconds timeout = 5000000);
 		// (AI-assisted) Destroy image views first; GPU completion and console teardown still need proper testing.
 		bool Destroy();
@@ -80,6 +92,7 @@ namespace PS4Port
 		std::uint32_t m_pixel_pitch = 0;
 		std::uint32_t m_current_index = 0;
 		std::uint64_t m_frame_count = 0;
+		std::uint64_t m_acquire_count = 0; // perf-test17: picks the buffer; equals m_frame_count when nothing is queued
 		std::uint32_t m_pending_flips = 0;
 		bool m_flip_pending = false;
 		bool m_acquired = false;

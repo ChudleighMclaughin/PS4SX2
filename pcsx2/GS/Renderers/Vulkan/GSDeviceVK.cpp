@@ -2599,9 +2599,11 @@ void GSDeviceVK::SubmitCommandBuffer(VKSwapChain* present_swap_chain)
 		if (m_ps4_defer_next_flip)
 		{
 			m_ps4_defer_next_flip = false;
-			m_ps4_flip_deferred = true;
-			m_ps4_flip_index = m_current_frame;
-			m_ps4_flip_fence_counter = resources.fence_counter;
+			// perf-test17: keep flips in order and the queue at two; without vm-gs-flip-queue it is empty here
+			// (BeginPresent flipped everything).
+			while (m_ps4_flip_count >= 2)
+				PS4CompleteOldestFlip(true);
+			m_ps4_flips[m_ps4_flip_count++] = {resources.fence_counter, present_swap_chain->PS4DetachCurrentImage()};
 			m_ps4_flip_polls = 0;
 			return;
 		}
@@ -2651,37 +2653,47 @@ void GSDeviceVK::SubmitCommandBuffer(VKSwapChain* present_swap_chain)
 #if defined(PCSX2_PS4)
 bool GSDeviceVK::PS4CompleteDeferredFlip(u64 timeout_ns)
 {
-	// (AI-assisted) Verbose flip diagnostics for hang detection. Needs proper testing.
-	extern void ProbeLog(const char* format, ...);
-	if (!m_ps4_flip_deferred)
-		return true;
-
-	if (m_completed_fence_counter < m_ps4_flip_fence_counter)
+	// timeout_ns: 0 polls, anything else blocks (only 0 and UINT64_MAX are passed).
+	while (m_ps4_flip_count != 0)
 	{
-		// A frame resource is reused only after its completion, which advances the counter above,
-		// so the recorded slot still holds the presented frame here.
-		FrameResources& resources = m_frame_resources[m_ps4_flip_index];
-		pxAssert(resources.fence_counter == m_ps4_flip_fence_counter);
-		if (timeout_ns != UINT64_MAX && !m_last_submit_failed)
+		if (!PS4CompleteOldestFlip(timeout_ns != 0))
+			return false;
+	}
+	return true;
+}
+
+bool GSDeviceVK::PS4CompleteOldestFlip(bool block)
+{
+	if (m_ps4_flip_count == 0)
+		return true;
+	const PS4PendingFlip flip = m_ps4_flips[0];
+	if (m_completed_fence_counter < flip.fence_counter)
+	{
+		if (!block && !m_last_submit_failed)
 		{
-			const VkResult status = (timeout_ns == 0) ? vkGetFenceStatus(m_device, resources.fence) :
-			                                            vkWaitForFences(m_device, 1, &resources.fence, VK_TRUE, timeout_ns);
-			if (status == VK_NOT_READY || status == VK_TIMEOUT)
+			// Non-blocking: advance the completed counter (and run the completion bookkeeping) as far as it goes.
+			ScanForCommandBufferCompletion();
+			if (m_completed_fence_counter < flip.fence_counter)
 				return false;
 		}
-		// Signaled (or an error, which the blocking wait reports): run the normal completion bookkeeping.
-		WaitForFenceCounter(m_ps4_flip_fence_counter, 1);
+		else
+		{
+			// Signaled (or an error, which the blocking wait reports): run the normal completion bookkeeping.
+			WaitForFenceCounter(flip.fence_counter, 1);
+		}
 	}
 
-	m_ps4_flip_deferred = false;
+	m_ps4_flips[0] = m_ps4_flips[1];
+	m_ps4_flip_count--;
+	if (!m_swap_chain)
+		return true;
 	if (m_last_submit_failed)
 	{
 		// As the synchronous path: no flip for a frame whose completion failed.
-		if (m_swap_chain)
-			m_swap_chain->ReleaseCurrentImage();
+		m_swap_chain->PS4DropImage();
 		return true;
 	}
-	if (!m_swap_chain || !m_swap_chain->PresentCurrentImage())
+	if (!m_swap_chain->PS4PresentImage(flip.image_index))
 		m_last_submit_failed = true;
 	return true;
 }
@@ -2870,7 +2882,7 @@ void GSDeviceVK::ExecuteCommandBuffer(WaitType wait_for_completion)
 	// Push constants need to be refreshed each command buffer.
 	m_dirty_flags |= DIRTY_FLAG_VS_PUSH_CONSTANTS;
 #if defined(PCSX2_PS4)
-	if (m_ps4_flip_deferred)
+	if (m_ps4_flip_count != 0)
 		PS4CompleteDeferredFlip(0);
 #endif
 }
@@ -3905,7 +3917,19 @@ GSDevice::PresentResult GSDeviceVK::BeginPresent(bool frame_skip)
 	// The previous frame's flip must be out before acquiring: VideoOut picks images by frame count.
 	// (AI-assisted) perf-test14: a skipped frame acquires nothing, so it only polls; blocking here held the
 	// GS thread for the whole GPU time of the frame just submitted, once per game frame.
-	PS4CompleteDeferredFlip((frame_skip && m_ps4_skip_nowait) ? 0 : UINT64_MAX);
+	// (AI-assisted) perf-test17: with vm-gs-flip-queue, flip whatever has finished and go on with one frame
+	// still queued: VideoOut then takes the next of its 3 buffers, so the GS thread no longer waits here for
+	// the previous frame to finish.
+	if (frame_skip && m_ps4_skip_nowait)
+		PS4CompleteDeferredFlip(0);
+	else if (m_ps4_flip_queue && !frame_skip)
+	{
+		PS4CompleteDeferredFlip(0);
+		while (m_ps4_flip_count > 1)
+			PS4CompleteOldestFlip(true);
+	}
+	else
+		PS4CompleteDeferredFlip(UINT64_MAX);
 #endif
 
 	// Check if the device was lost.
@@ -4261,7 +4285,11 @@ bool GSDeviceVK::CreateDeviceAndSwapChain()
 		return false;
 	}
 	m_ps4_async_flip = access("/data/PS4SX2/vm-sync-flip", F_OK) != 0;
-	m_ps4_defer_next_flip = m_ps4_flip_deferred = false;
+	m_ps4_defer_next_flip = false;
+	m_ps4_flip_count = 0;
+	m_ps4_flip_queue = m_ps4_async_flip && access("/data/PS4SX2/vm-gs-flip-queue", F_OK) == 0;
+	Console.WriteLn("PS4 GS: flip queue %s (/data/PS4SX2/vm-gs-flip-queue)",
+		m_ps4_flip_queue ? "on: present goes on with one frame unflipped" : "off");
 	m_ps4_skip_nowait = m_ps4_async_flip && access("/data/PS4SX2/vm-gs-skip-nowait", F_OK) == 0;
 	Console.WriteLn("PS4 GS: skipped frames %s the pending flip (/data/PS4SX2/vm-gs-skip-nowait)",
 		m_ps4_skip_nowait ? "only poll" : "wait for");
@@ -8036,7 +8064,7 @@ void GSDeviceVK::RenderHW(GSHWDrawConfig& config)
 	PS4_GS_SCOPE(VKRender);
 #if defined(PCSX2_PS4)
 	// (AI-assisted) Flip the previous frame soon after the GPU finishes it, polling every 8th draw.
-	if (m_ps4_flip_deferred && (++m_ps4_flip_polls & 7) == 0)
+	if (m_ps4_flip_count != 0 && (++m_ps4_flip_polls & 7) == 0)
 		PS4CompleteDeferredFlip(0);
 #endif
 #ifdef ORBIS_VULKAN

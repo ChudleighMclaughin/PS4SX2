@@ -669,6 +669,7 @@ void VKSwapChain::DestroySwapChainImages()
 		m_images.clear();
 		m_video_out.reset();
 		m_image_acquire_result.reset();
+		m_ps4_unflipped = 0;
 		return;
 	}
 #endif
@@ -730,7 +731,7 @@ VkResult VKSwapChain::AcquireNextImage()
 #if defined(PCSX2_PS4)
 	if (m_is_video_out)
 	{
-		if (!m_video_out || !m_video_out->Acquire())
+		if (!m_video_out || !m_video_out->Acquire(m_ps4_unflipped))
 			return VK_ERROR_SURFACE_LOST_KHR;
 		m_current_image = m_video_out->GetCurrentIndex();
 		m_image_acquire_result = VK_SUCCESS;
@@ -765,6 +766,29 @@ bool VKSwapChain::PresentCurrentImage()
 	return false;
 #endif
 }
+
+#if defined(PCSX2_PS4)
+u32 VKSwapChain::PS4DetachCurrentImage()
+{
+	if (m_video_out)
+		m_video_out->Detach();
+	m_image_acquire_result.reset();
+	m_ps4_unflipped++;
+	return m_current_image;
+}
+
+bool VKSwapChain::PS4PresentImage(u32 index)
+{
+	PS4DropImage();
+	return m_is_video_out && m_video_out && m_video_out->PresentIndex(index);
+}
+
+void VKSwapChain::PS4DropImage()
+{
+	if (m_ps4_unflipped)
+		m_ps4_unflipped--;
+}
+#endif
 
 void VKSwapChain::ReleaseCurrentImage()
 {
