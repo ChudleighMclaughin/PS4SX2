@@ -479,8 +479,16 @@ void psxRcntUpdate()
 		_rcntTestTarget(i);
 	}
 
-	SPU2_SYNC(); // (AI-assisted) perf-test8: lClocks belongs to the SPU2 worker until it is idle
+#if defined(PCSX2_PS4_VM_BOOT)
+	// (AI-assisted) perf-test11: the worker only moves lClocks in whole 768-cycle ticks, so its phase is the
+	// same before and after a mix; with vm-spu2-nowait read it without waiting for the worker.
+	// shortcut: TimeUpdateMix's sanity clamp (huge gaps) shifts the phase; then this one delta is off by <768 cycles.
+	if (!SPU2Thread::g_nowait)
+		SPU2_SYNC();
+	const u32 spu2_delta = (psxRegs.cycle - __atomic_load_n(&lClocks, __ATOMIC_RELAXED)) % 768;
+#else
 	const u32 spu2_delta = (psxRegs.cycle - lClocks) % 768;
+#endif
 	psxCounters[6].startCycle = psxRegs.cycle - spu2_delta;
 	psxCounters[6].deltaCycles = psxCounters[6].rate;
 	SPU2async();

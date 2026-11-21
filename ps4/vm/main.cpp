@@ -405,11 +405,12 @@ void VMHostPoll()
 		{
 			// (AI-assisted) perf-test8: SPU2 worker counters (cumulative).
 			const SPU2Thread::Stats st = SPU2Thread::GetStats();
-			ProbeLog("SPU2 worker cumulative: posts=%llu worker_ticks=%llu ee_sync_ticks=%llu ee_waits=%llu ee_wait_ms=%.1f deferred_irq=%llu dma4=%llu dma7=%llu\n",
+			ProbeLog("SPU2 worker cumulative: posts=%llu worker_ticks=%llu ee_sync_ticks=%llu ee_waits=%llu ee_wait_ms=%.1f deferred_irq=%llu dma4=%llu dma7=%llu busy_posts=%llu\n",
 				static_cast<unsigned long long>(st.posts), static_cast<unsigned long long>(st.worker_ticks),
 				static_cast<unsigned long long>(st.sync_ticks), static_cast<unsigned long long>(st.waits),
 				st.wait_tsc / 1.6e6, static_cast<unsigned long long>(st.irqs),
-				static_cast<unsigned long long>(st.dma4), static_cast<unsigned long long>(st.dma7));
+				static_cast<unsigned long long>(st.dma4), static_cast<unsigned long long>(st.dma7),
+				static_cast<unsigned long long>(st.busy_posts));
 		}
 		ProbeLog("EE PS5 fast paths cumulative: tid_hits=%llu tid_checks=%llu tid_mismatches=%llu eret_skips=%llu "
 				 "eret_kept_intc=%llu dmac=%llu timer=%llu vu0=%llu vif1_fused=%llu hle_flushes=%llu vif1_batched=%llu\n",
@@ -873,6 +874,10 @@ static void* RunVM(void*)
 		access("/data/PS4SX2/vm-no-thread-affinity", F_OK) != 0;
 	ProbeLog("SPU2 worker thread: %s\n", SPU2Thread::g_enabled ? "enabled by /data/PS4SX2/vm-spu2-thread (core 1 unless vm-cores.txt sets SPU2)" :
 															  "off (opt in with /data/PS4SX2/vm-spu2-thread)");
+	// (AI-assisted) perf-test11: the EE posts to a busy worker instead of waiting (needs vm-spu2-thread).
+	SPU2Thread::g_nowait = SPU2Thread::g_enabled && access("/data/PS4SX2/vm-spu2-nowait", F_OK) == 0;
+	ProbeLog("SPU2 worker no-wait posts: %s\n", SPU2Thread::g_nowait ? "enabled by /data/PS4SX2/vm-spu2-nowait" :
+																	 "off (opt in with /data/PS4SX2/vm-spu2-nowait, needs vm-spu2-thread)");
 	// (AI-assisted) perf-test10: opt-in VIF1 chain passes run back to back, cycles charged at the end.
 	g_ps4_vif1_batch = access("/data/PS4SX2/vm-vif1-batch", F_OK) == 0;
 	ProbeLog("VIF1 pass batching: %s\n", g_ps4_vif1_batch ? "enabled by /data/PS4SX2/vm-vif1-batch (up to 4096 cycles per batch)" :
@@ -928,6 +933,7 @@ static void* RunVM(void*)
 		g_orbis_hle_flush.store(0, std::memory_order_relaxed);
 		g_orbis_pfw.store(0, std::memory_order_relaxed);
 		SPU2Thread::g_enabled = false;
+		SPU2Thread::g_nowait = false;
 		g_ps4_vif1_batch = false;
 #endif
 		// Still before VM reset and the first guest instruction. Updating the base
@@ -1107,7 +1113,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test10\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test11\n");
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");
 	ProbeLog("Telemetry: PC debug server target from /data/PS4SX2/telemetry.conf (create with 'host=PC_IP port=19423')\n");

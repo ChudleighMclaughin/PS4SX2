@@ -430,6 +430,7 @@ namespace SPU2Thread
 {
 	bool g_enabled = false;
 	int g_core = 1;
+	bool g_nowait = false;
 
 	namespace
 	{
@@ -512,6 +513,23 @@ namespace SPU2Thread
 
 	void AsyncUpdate(u64 cClocks)
 	{
+		// (AI-assisted) perf-test11 (vm-spu2-nowait): while a mix is still running, only move the target on
+		// (the worker mixes up to the newest target next) instead of waiting for it. The DMA progress check and
+		// deferred IRQs wait for the next call that finds the worker idle, or the next SPU2_SYNC.
+		if (g_nowait && s_started && s_done.load(std::memory_order_acquire) != s_target.load(std::memory_order_relaxed))
+		{
+			if (cClocks != s_target.load(std::memory_order_relaxed))
+			{
+				s_stats.busy_posts++;
+				s_target.store(cClocks, std::memory_order_seq_cst);
+				if (s_sleeping.load(std::memory_order_seq_cst))
+				{
+					std::lock_guard lock(s_mutex);
+					s_cv.notify_one();
+				}
+			}
+			return;
+		}
 		Sync();
 		CheckDMAProgress(0);
 		CheckDMAProgress(1);

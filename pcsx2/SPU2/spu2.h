@@ -92,11 +92,12 @@ namespace SPU2Thread
 {
 	extern bool g_enabled; // set on the EE thread before the VM runs
 	extern int g_core; // worker core (vm-cores.txt "SPU2=" overrides)
+	extern bool g_nowait; // (AI-assisted) perf-test11: vm-spu2-nowait, set with g_enabled
 	void Sync(); // EE thread: wait for the worker, then apply its deferred IRQs
 	void AsyncUpdate(u64 cClocks); // EE thread: SPU2async when enabled
 	struct Stats
 	{
-		u64 posts, worker_ticks, sync_ticks, waits, wait_tsc, irqs, dma4, dma7;
+		u64 posts, worker_ticks, sync_ticks, waits, wait_tsc, irqs, dma4, dma7, busy_posts;
 	};
 	Stats GetStats(); // EE thread
 } // namespace SPU2Thread
