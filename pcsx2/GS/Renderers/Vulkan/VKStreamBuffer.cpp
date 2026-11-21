@@ -383,7 +383,8 @@ bool VKStreamBuffer::WaitForClearSpace(u32 num_bytes)
 		return false;
 
 	// Wait until this fence is signaled. This will fire the callback, updating the GPU position.
-	GSDeviceVK::GetInstance()->WaitForFenceCounter(iter->first);
+	// (AI-assisted) perf-test15: tag the wait with the buffer size in MiB, which tells the stream buffers apart.
+	GSDeviceVK::GetInstance()->WaitForFenceCounter(iter->first, 1000 + static_cast<int>(m_size >> 20));
 	m_tracked_fences.erase(
 		m_tracked_fences.begin(), m_current_offset == iter->second ? m_tracked_fences.end() : ++iter);
 	m_current_offset = new_offset;

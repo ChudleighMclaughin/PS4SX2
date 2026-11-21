@@ -1005,7 +1005,7 @@ void GSDownloadTextureVK::Flush()
 	}
 	else
 	{
-		GSDeviceVK::GetInstance()->WaitForFenceCounter(m_copy_fence_counter);
+		GSDeviceVK::GetInstance()->WaitForFenceCounter(m_copy_fence_counter, 3); // perf-test15: caller tag
 	}
 }
 

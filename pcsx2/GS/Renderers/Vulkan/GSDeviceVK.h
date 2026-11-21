@@ -131,7 +131,8 @@ public:
 
 	// Wait for a fence to be completed.
 	// Also invokes callbacks for completion.
-	void WaitForFenceCounter(u64 fence_counter);
+	// (AI-assisted) perf-test15: ps4_reason tags the caller for the PS4 fence-wait counters.
+	void WaitForFenceCounter(u64 fence_counter, int ps4_reason = 0);
 
 	void WaitForGPUIdle();
 

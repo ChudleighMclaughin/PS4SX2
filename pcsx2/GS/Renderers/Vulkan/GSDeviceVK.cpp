@@ -28,6 +28,8 @@
 #include "imgui.h"
 
 #include <bit>
+#include <chrono>
+#include <cstdio>
 #include <limits>
 #include <mutex>
 #include <sstream>
@@ -1231,7 +1233,29 @@ void GSDeviceVK::FreePersistentDescriptorSet(VkDescriptorSet set)
 	vkFreeDescriptorSets(m_device, m_global_descriptor_pool, 1, &set);
 }
 
-void GSDeviceVK::WaitForFenceCounter(u64 fence_counter)
+#if defined(PCSX2_PS4)
+// (AI-assisted) perf-test15: which caller waits on a fence counter, and how much of it is the GPU wait itself
+// (vkWaitForFences) versus the completion bookkeeping after it. perf-test14 showed one ~5 ms wait per game frame
+// that was not the skipped-frame flip.
+static u64 s_ps4_fence_gpu_ns;
+static u64 s_ps4_fw_calls[8], s_ps4_fw_total_ns[8], s_ps4_fw_gpu_ns[8];
+static u32 s_ps4_fw_count;
+static int PS4FenceSlot(int reason)
+{
+	switch (reason)
+	{
+		case 1: return 1; // deferred VideoOut flip
+		case 3: return 2; // texture copy/readback
+		case 1032: return 3; // vertex stream buffer (32 MiB)
+		case 1016: return 4; // index stream buffer (16 MiB)
+		case 1008: return 5; // uniform stream buffers (8 MiB)
+		case 1064: return 6; // texture upload stream buffer (64 MiB)
+		default: return reason >= 1000 ? 7 : 0;
+	}
+}
+#endif
+
+void GSDeviceVK::WaitForFenceCounter(u64 fence_counter, int ps4_reason)
 {
 	if (m_completed_fence_counter >= fence_counter)
 		return;
@@ -1248,7 +1272,37 @@ void GSDeviceVK::WaitForFenceCounter(u64 fence_counter)
 
 	pxAssert(index != m_current_frame);
 	ORBIS_VKW(2);
+#if defined(PCSX2_PS4)
+	const auto ps4_t0 = std::chrono::steady_clock::now();
+	s_ps4_fence_gpu_ns = 0;
+#endif
 	WaitForCommandBufferCompletion(index);
+#if defined(PCSX2_PS4)
+	{
+		const int slot = PS4FenceSlot(ps4_reason);
+		s_ps4_fw_calls[slot]++;
+		s_ps4_fw_total_ns[slot] += static_cast<u64>(
+			std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - ps4_t0).count());
+		s_ps4_fw_gpu_ns[slot] += s_ps4_fence_gpu_ns;
+		if ((++s_ps4_fw_count & 255) == 0)
+		{
+			extern void ProbeLog(const char* format, ...);
+			static const char* const names[8] = {"other", "flip", "texcopy", "vertex32MB", "index16MB", "uniform8MB",
+				"texupload64MB", "stream_other"};
+			char line[512];
+			size_t n = static_cast<size_t>(
+				std::snprintf(line, sizeof(line), "GS fence waits cumulative (calls/total_ms/gpu_ms):"));
+			for (int i = 0; i < 8 && n < sizeof(line); i++)
+			{
+				if (s_ps4_fw_calls[i])
+					n += static_cast<size_t>(std::snprintf(line + n, sizeof(line) - n, " %s=%llu/%.0f/%.0f", names[i],
+						static_cast<unsigned long long>(s_ps4_fw_calls[i]), s_ps4_fw_total_ns[i] / 1e6,
+						s_ps4_fw_gpu_ns[i] / 1e6));
+			}
+			ProbeLog("%s\n", line);
+		}
+	}
+#endif
 }
 
 void GSDeviceVK::WaitForGPUIdle()
@@ -2300,7 +2354,14 @@ void OrbisVkGpuProfSecond()
 void GSDeviceVK::WaitForCommandBufferCompletion(u32 index)
 {
 	// Wait for this command buffer to be completed.
+#if defined(PCSX2_PS4)
+	const auto ps4_w0 = std::chrono::steady_clock::now();
+#endif
 	const VkResult res = vkWaitForFences(m_device, 1, &m_frame_resources[index].fence, VK_TRUE, UINT64_MAX);
+#if defined(PCSX2_PS4)
+	s_ps4_fence_gpu_ns = static_cast<u64>(
+		std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - ps4_w0).count());
+#endif
 	if (res != VK_SUCCESS)
 	{
 		LOG_VULKAN_ERROR(res, "vkWaitForFences failed: ");
@@ -2609,7 +2670,7 @@ bool GSDeviceVK::PS4CompleteDeferredFlip(u64 timeout_ns)
 				return false;
 		}
 		// Signaled (or an error, which the blocking wait reports): run the normal completion bookkeeping.
-		WaitForFenceCounter(m_ps4_flip_fence_counter);
+		WaitForFenceCounter(m_ps4_flip_fence_counter, 1);
 	}
 
 	m_ps4_flip_deferred = false;
