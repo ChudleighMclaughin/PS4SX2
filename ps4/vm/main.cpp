@@ -38,6 +38,10 @@
 #include "ps4/core/EEHotspotsPS4.h"
 #include "ps4/core/GSProfilePS4.h"
 #include "ps4/core/VKReplayPS4.h" // (AI-assisted) perf-test12
+// (AI-assisted) perf-test16: the PS4 RADV winsys (SDK libamd_common.a, ac_ps4_drm.c) sums, from GPU-clock
+// timestamps, the time the command processor spent on submissions (busy) over first start to last end
+// (span). Weak, so a driver without it just skips the heartbeat line.
+extern "C" void ac_ps4_get_gpu_busy(uint64_t* busy_ticks, uint64_t* span_ticks) __attribute__((weak));
 #include "HostPollGate.h"
 #include "GameMenu.h"
 #include "SessionLogs.h"
@@ -426,6 +430,18 @@ void VMHostPoll()
 			char replay_line[512];
 			PS4VkReplay::FormatStats(replay_line, sizeof(replay_line));
 			ProbeLog("%s\n", replay_line);
+		}
+		if (ac_ps4_get_gpu_busy) // (AI-assisted) perf-test16
+		{
+			static uint64_t s_prev_busy, s_prev_span;
+			uint64_t busy = 0, span = 0;
+			ac_ps4_get_gpu_busy(&busy, &span);
+			if (span > s_prev_span && busy >= s_prev_busy)
+				ProbeLog("GPU busy (driver timestamps): interval=%.1f%% total=%.1f%%\n",
+					100.0 * static_cast<double>(busy - s_prev_busy) / static_cast<double>(span - s_prev_span),
+					span ? 100.0 * static_cast<double>(busy) / static_cast<double>(span) : 0.0);
+			s_prev_busy = busy;
+			s_prev_span = span;
 		}
 		ProbeLog("EE idle loops: loops=%llu skips=%llu callback_busy=%llu\n",
 			static_cast<unsigned long long>(g_ps4_idle_loop_blocks), static_cast<unsigned long long>(g_ps4_idle_loop_runs),
@@ -1120,7 +1136,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test15\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test16\n");
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");
 	ProbeLog("Telemetry: PC debug server target from /data/PS4SX2/telemetry.conf (create with 'host=PC_IP port=19423')\n");
