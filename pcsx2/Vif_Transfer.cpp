@@ -6,6 +6,26 @@
 #include "Vif_Dynarec.h"
 #include "MTVU.h" // vk-285-84: VU_Thread kick batching
 #include "OrbisEEDiag.h" // vk-285-100
+#if defined(PCSX2_PS4_VM_BOOT)
+#include "ps4/core/EEEventProfilePS4.h" // (AI-assisted) perf-test19: VIF1 command handler time by kind
+
+static __fi PS4EEEventProfile::SubPhase PS4Vif1CmdPart(u32 cmd)
+{
+	using PS4EEEventProfile::SubPhase;
+	cmd &= 0x7f;
+	if ((cmd & 0x60) == 0x60)
+		return SubPhase::Vif1CmdUnpack;
+	if (cmd == 0x50 || cmd == 0x51)
+		return SubPhase::Vif1CmdDirect;
+	if (cmd == 0x14 || cmd == 0x15 || cmd == 0x17)
+		return SubPhase::Vif1CmdMsCal;
+	if (cmd == 0x4a)
+		return SubPhase::Vif1CmdMpg;
+	if (cmd == 0x10 || cmd == 0x11 || cmd == 0x13)
+		return SubPhase::Vif1CmdFlush;
+	return SubPhase::Vif1CmdOther;
+}
+#endif
 
 //------------------------------------------------------------------
 // VifCode Transfer Interpreter (Vif0/Vif1)
@@ -112,6 +132,14 @@ _vifT void vifTransferLoop(u32* &data) {
 			}
 		}
 
+#if defined(PCSX2_PS4_VM_BOOT)
+		if (idx)
+		{
+			PS4EEEventProfile::SubScope cmd_scope(PS4Vif1CmdPart(vifX.cmd));
+			ret = vifCmdHandler[idx][vifX.cmd & 0x7f](vifX.pass, data);
+		}
+		else
+#endif
 		ret = vifCmdHandler[idx][vifX.cmd & 0x7f](vifX.pass, data);
 		data   += ret;
 		pSize  -= ret;

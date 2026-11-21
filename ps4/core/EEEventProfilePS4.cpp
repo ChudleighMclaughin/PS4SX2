@@ -26,7 +26,10 @@ namespace PS4EEEventProfile
 		};
 		SubCounter s_sub_counters[static_cast<unsigned>(SubPhase::Count)];
 		constexpr const char* SUB_NAMES[] = {"iop_execute", "iop_event_test", "spu2_mix", "audio_write",
-			"dma_mtvu", "dma_vif1", "dma_gif", "dma_sif0", "dma_sif1", "dma_other"};
+			"dma_mtvu", "dma_vif1", "dma_gif", "dma_sif0", "dma_sif1", "dma_other", "vif1_gif_check", "vif1_chain",
+			"vif1_tag", "vif1_cmd_unpack", "vif1_cmd_direct", "vif1_cmd_mscal", "vif1_cmd_mpg", "vif1_cmd_flush",
+			"vif1_cmd_other"};
+		static_assert(std::size(SUB_NAMES) == static_cast<unsigned>(SubPhase::Count));
 		struct Counter
 		{
 			std::atomic<std::uint64_t> nanoseconds{0};
@@ -122,8 +125,8 @@ namespace PS4EEEventProfile
 
 	static void LogSubInterval(double seconds)
 	{
-		char ms_line[512];
-		char calls_line[512];
+		char ms_line[1024];
+		char calls_line[1024];
 		int ms_len = 0, calls_len = 0;
 		bool any = false;
 		for (unsigned i = 0; i < static_cast<unsigned>(SubPhase::Count); ++i)
@@ -147,7 +150,8 @@ namespace PS4EEEventProfile
 		}
 		if (!any)
 			return;
-		// Nested: spu2_mix includes audio_write, and iop_execute includes most of both.
+		// Nested: spu2_mix includes audio_write, and iop_execute includes most of both. dma_vif1 includes the
+		// vif1_* parts; vif1_chain and vif1_tag include the vif1_cmd_* parts.
 		ProbeLog("EE sub-phase profile (estimated wall ms per second):%s\n", ms_line);
 		ProbeLog("EE sub-phase calls (estimated per second):%s\n", calls_line);
 	}

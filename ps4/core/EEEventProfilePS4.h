@@ -45,6 +45,16 @@ namespace PS4EEEventProfile
 		DmaSIF0,
 		DmaSIF1,
 		DmaOther,
+		// (AI-assisted) perf-test19: inside dma_vif1 (nested; the vif1_cmd_* parts are inside vif1_chain/vif1_tag).
+		Vif1GifCheck,
+		Vif1Chain,
+		Vif1Tag,
+		Vif1CmdUnpack,
+		Vif1CmdDirect,
+		Vif1CmdMsCal,
+		Vif1CmdMpg,
+		Vif1CmdFlush,
+		Vif1CmdOther,
 		Count
 	};
 	extern bool s_sub_active; // EE owner only: true inside a sampled event test.

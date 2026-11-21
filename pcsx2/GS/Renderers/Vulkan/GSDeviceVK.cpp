@@ -2708,7 +2708,10 @@ void PS4GSPollDeferredFlip()
 	if (dev->PS4HasDeferredFlip())
 	{
 		const bool ok = dev->PS4CompleteDeferredFlip(0);
-		if (!ok)
+		// (AI-assisted) perf-test19: with vm-gs-flip-queue a frame in flight here is normal, and this line came
+		// once per frame. Keep the first few and then one in 4096.
+		static u32 s_still_deferred_logs;
+		if (!ok && (s_still_deferred_logs++ < 8 || (s_still_deferred_logs & 4095) == 0))
 		{
 			extern void ProbeLog(const char* format, ...);
 			ProbeLog("VideoOut flip still deferred: fence=%llu completed=%llu deferred=%d last_submit_failed=%d\n",

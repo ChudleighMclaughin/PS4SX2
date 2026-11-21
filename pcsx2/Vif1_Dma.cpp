@@ -9,6 +9,12 @@
 #include "Vif_Dma.h"
 #include "Vif_Dynarec.h"
 #include "OrbisEEDiag.h" // vk-285-100
+#if defined(PCSX2_PS4_VM_BOOT)
+#include "ps4/core/EEEventProfilePS4.h" // (AI-assisted) perf-test19: vif1_* sub-phases
+#define PS4_VIF1_SCOPE(part) PS4EEEventProfile::SubScope ps4_vif1_scope_(PS4EEEventProfile::SubPhase::part)
+#else
+#define PS4_VIF1_SCOPE(part) ((void)0)
+#endif
 
 u32 g_vif1Cycles = 0;
 // PS5 port (vk-285-99): VIF1 DMA tags read, by ID (REFE, CNT, NEXT, REF, REFS, CALL, RET, END), for the
@@ -363,7 +369,10 @@ __fi void vif1Interrupt()
 		vif1Regs.stat.VGW = false; //Let vif continue if it's stuck on a flush
 
 		if (gifUnit.checkPaths(1, 0, 1))
+		{
+			PS4_VIF1_SCOPE(Vif1GifCheck);
 			gifUnit.Execute(false, true);
+		}
 	}
 	//Some games (Fahrenheit being one) start vif first, let it loop through blankness while it sets MFIFO mode, so we need to check it here.
 	if (dmacRegs.ctrl.MFD == MFD_VIF1)
@@ -465,7 +474,10 @@ __fi void vif1Interrupt()
 
 	if (vif1.inprogress & 0x1)
 	{
-		_VIF1chain();
+		{
+			PS4_VIF1_SCOPE(Vif1Chain);
+			_VIF1chain();
+		}
 		// VIF_NORMAL_FROM_MEM_MODE is a very slow operation.
 		// Timesplitters 2 depends on this beeing a bit higher than 128.
 		if (vif1ch.chcr.DIR)
@@ -508,7 +520,10 @@ __fi void vif1Interrupt()
 		}
 
 		if ((vif1.inprogress & 0x1) == 0)
+		{
+			PS4_VIF1_SCOPE(Vif1Tag);
 			vif1SetupTransfer();
+		}
 		if (vif1ch.chcr.DIR)
 			vif1Regs.stat.FQC = std::min(vif1ch.qwc, (u32)16);
 
