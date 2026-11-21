@@ -23,6 +23,8 @@ u64 GSState::s_n = 0;
 u64 GSState::s_last_transfer_draw_n = 0;
 u64 GSState::s_transfer_n = 0;
 
+bool g_ps4_gs_skip_draws = false; // (AI-assisted) perf-test21: GS thread only, set by GSRenderer::VSync
+
 static __fi bool IsAutoFlushEnabled()
 {
 	return GSIsHardwareRenderer() ? (GSConfig.UserHacks_AutoFlush != GSHWAutoFlushLevel::Disabled) : GSConfig.AutoFlushSW;
@@ -2648,7 +2650,8 @@ void GSState::FlushPrim()
 				DumpTransferImages();
 		}
 
-		if (!skip_draw)
+		// (AI-assisted) perf-test21: vm-gs-frameskip drops the draws of every other game frame (GSRenderer::VSync).
+		if (!skip_draw && !g_ps4_gs_skip_draws)
 			Draw();
 
 		g_perfmon.Put(GSPerfMon::Draw, 1);

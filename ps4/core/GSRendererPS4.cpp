@@ -31,6 +31,9 @@
 #include <deque>
 #include <thread>
 #include <mutex>
+#include <unistd.h> // (AI-assisted) perf-test21: access() for vm-gs-frameskip
+
+extern bool g_ps4_gs_skip_draws; // GSState.cpp
 
 static void DumpGSPrivRegs(const GSPrivRegSet& r, const std::string& filename);
 
@@ -643,22 +646,48 @@ void GSRenderer::VSync(u32 field, bool registers_written, bool idle_frame)
 #endif
 	bool skip_frame = false;
 #if !defined(PCSX2_GS_RENDERER_PROBE)
+	bool is_unique_frame;
+	switch (PerformanceMetrics::GetInternalFPSMethod())
+	{
+		case PerformanceMetrics::InternalFPSMethod::GSPrivilegedRegister:
+			is_unique_frame = registers_written;
+			break;
+		case PerformanceMetrics::InternalFPSMethod::DISPFBBlit:
+			is_unique_frame = fb_sprite_frame;
+			break;
+		default:
+			is_unique_frame = true;
+			break;
+	}
+
+	// (AI-assisted) perf-test21: opt-in frame skip for graphics-bound games. Every other game frame is not
+	// drawn (GSState::FlushPrim drops its draws), and while that undrawn frame is on the PS2's display
+	// nothing is presented. After 4 vsyncs with no new game frame (loading, FMV) it gives up and draws.
+	static const bool s_ps4_frameskip = [] {
+		const bool on = access("/data/PS4SX2/vm-gs-frameskip", F_OK) == 0;
+		Console.WriteLn("PS4 GS: frame skip %s (/data/PS4SX2/vm-gs-frameskip)", on ? "on: every other game frame" : "off");
+		return on;
+	}();
+	static bool s_ps4_hide = false;
+	static u32 s_ps4_since_new = 0;
+	if (s_ps4_frameskip)
+	{
+		if (is_unique_frame)
+		{
+			s_ps4_since_new = 0;
+			s_ps4_hide = g_ps4_gs_skip_draws;
+			g_ps4_gs_skip_draws = !g_ps4_gs_skip_draws;
+		}
+		else if (++s_ps4_since_new > 4)
+		{
+			s_ps4_hide = false;
+			g_ps4_gs_skip_draws = false;
+		}
+		skip_frame = s_ps4_hide;
+	}
+
 	if (GSConfig.SkipDuplicateFrames && !GSCapture::IsCapturingVideo())
 	{
-		bool is_unique_frame;
-		switch (PerformanceMetrics::GetInternalFPSMethod())
-		{
-			case PerformanceMetrics::InternalFPSMethod::GSPrivilegedRegister:
-				is_unique_frame = registers_written;
-				break;
-			case PerformanceMetrics::InternalFPSMethod::DISPFBBlit:
-				is_unique_frame = fb_sprite_frame;
-				break;
-			default:
-				is_unique_frame = true;
-				break;
-		}
-
 		if (!is_unique_frame && m_skipped_duplicate_frames < MAX_SKIPPED_DUPLICATE_FRAMES)
 		{
 			m_skipped_duplicate_frames++;
