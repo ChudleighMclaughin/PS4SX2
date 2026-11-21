@@ -3,6 +3,7 @@
 #include "GamePlatform.h"
 #include <atomic>
 #include <cstddef>
+#include <mutex>
 #include <pthread.h>
 #include <string>
 #include <vector>
@@ -23,7 +24,7 @@ public:
 	// cache_name is the launcher title stem. When omitted, the serial is used.
 	bool Start(const std::string& serial, const std::string& cache_name = {}, GamePlatform platform = GamePlatform::PS2);
 	bool Collect();
-	void Cancel() { m_cancel.store(true); }
+	void Cancel();
 	bool Active() const { return m_active; }
 	const std::string& Serial() const { return m_serial; }
 	bool Succeeded() const { return m_success; } // Read only after Collect().
@@ -35,6 +36,9 @@ private:
 	std::string m_serial;
 	std::string m_cache_name;
 	GamePlatform m_platform = GamePlatform::PS2;
+	// (AI-assisted) perf-test15: the request a blocked send is waiting on, so Cancel() can abort it.
+	std::mutex m_http_lock;
+	int m_http_request = -1;
 };
 
 

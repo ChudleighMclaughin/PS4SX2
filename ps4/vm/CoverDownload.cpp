@@ -132,6 +132,23 @@ bool PS4CoverHttp::Get(const std::string& url, const char* user_agent, std::vect
 	return true;
 }
 
+// (AI-assisted) perf-test15: with /data/PS4SX2/vm-fast-game-start, leaving the menu aborts a pending cover
+// request. Offline, sceHttpSendRequest ignored the 4 s timeouts and the destructor's join held the game
+// start for ~2 minutes.
+void DiscCoverDownload::Cancel()
+{
+	m_cancel.store(true);
+	static const bool abort_on_cancel = access("/data/PS4SX2/vm-fast-game-start", F_OK) == 0;
+	if (!abort_on_cancel)
+		return;
+	std::lock_guard<std::mutex> lock(m_http_lock);
+	if (m_http_request >= 0)
+	{
+		ProbeLog("Disc cover: aborting pending request serial=%s (vm-fast-game-start)\n", m_serial.c_str());
+		sceHttpAbortRequest(m_http_request);
+	}
+}
+
 DiscCoverDownload::~DiscCoverDownload()
 {
 	Cancel();
@@ -218,7 +235,23 @@ void DiscCoverDownload::Run()
 		return;
 	request.request = sceHttpCreateRequestWithURL(request.connection, ORBIS_METHOD_GET, url.c_str(), 0);
 	ProbeLog("Disc cover: request=%#x\n", request.request);
-	if (request.request < 0 || m_cancel.load())
+	if (request.request < 0)
+		return;
+	// perf-test15: publish the id before the cancel check, and withdraw it before Request deletes it.
+	{
+		std::lock_guard<std::mutex> lock(m_http_lock);
+		m_http_request = request.request;
+	}
+	struct Withdraw
+	{
+		DiscCoverDownload* self;
+		~Withdraw()
+		{
+			std::lock_guard<std::mutex> lock(self->m_http_lock);
+			self->m_http_request = -1;
+		}
+	} withdraw{this};
+	if (m_cancel.load())
 		return;
 	const auto started = std::chrono::steady_clock::now();
 	ProbeLog("Disc cover: native send begin serial=%s\n", m_serial.c_str());
