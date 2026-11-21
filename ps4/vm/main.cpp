@@ -1163,7 +1163,24 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test25\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test26\n");
+	// (AI-assisted) perf-test26: the first start of this build creates the recommended switch folders once
+	// (tested on GTA San Andreas, Shadow of the Colossus and God of War). vm-defaults-v1 records that it
+	// happened, so a folder deleted afterwards stays off.
+	if (access("/data/PS4SX2/vm-defaults-v1", F_OK) != 0)
+	{
+		static const char* const kDefaultSwitches[] = {"vm-gs-replay", "vm-gs-flip-queue", "vm-fast-game-start",
+			"vm-spu2-thread", "vm-spu2-nowait", "vm-ps5-fastpaths", "vm-smc-pageprot", "vm-ee-idle-skip",
+			"vm-instant-dma", "vm-iop-batch", "vm-iop-batch-loose"};
+		for (const char* name : kDefaultSwitches)
+		{
+			char path[96];
+			std::snprintf(path, sizeof(path), "/data/PS4SX2/%s", name);
+			mkdir(path, 0777);
+		}
+		mkdir("/data/PS4SX2/vm-defaults-v1", 0777);
+		ProbeLog("First-run defaults: recommended switch folders created (delete vm-defaults-v1 to recreate them)\n");
+	}
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");
 	ProbeLog("Telemetry: PC debug server target from /data/PS4SX2/telemetry.conf (create with 'host=PC_IP port=19423')\n");
