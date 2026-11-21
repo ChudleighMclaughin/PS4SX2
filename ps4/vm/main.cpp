@@ -77,6 +77,7 @@ extern bool g_ps4_smc_page_protect;
 extern bool g_ps4_idle_loop_skip;
 // (AI-assisted) perf-test7: the PS5 port's EE fast paths (OrbisCompatPS4.cpp, PlatformVM.cpp).
 extern std::atomic<int> g_orbis_hle_tid, g_orbis_eret_fast, g_orbis_vif1_fuse, g_orbis_vif_fast, g_orbis_hle_flush, g_orbis_pfw;
+extern std::atomic<int> g_orbis_mtvu_batch; // MTVU.cpp
 extern u64 g_orbis_tid_hits, g_orbis_tid_checks, g_orbis_tid_mismatches, g_orbis_eret_skips, g_orbis_vif1_fused, g_orbis_hle_flushes;
 extern bool g_ps4_vif1_batch; // (AI-assisted) perf-test10 (Vif1_Dma.cpp)
 extern u64 g_ps4_vif1_batched;
@@ -891,6 +892,11 @@ static void* RunVM(void*)
 			g_orbis_hle_tid.load(), g_orbis_eret_fast.load(), g_orbis_vif_fast.load(), g_orbis_vif1_fuse.load(),
 			g_orbis_hle_flush.load(), g_orbis_pfw.load());
 	}
+	// (AI-assisted) perf-test20: one VU-thread wake per VIF1 transfer instead of one locked add per packet
+	// (VU_Thread::BeginKickBatch; nothing set it on PS4). Read per vsync by OrbisVsyncRefresh.
+	g_orbis_mtvu_batch.store(access("/data/PS4SX2/vm-mtvu-batch", F_OK) == 0 ? 1 : 0, std::memory_order_relaxed);
+	ProbeLog("VU kick batching: %s\n", g_orbis_mtvu_batch.load() ? "enabled by /data/PS4SX2/vm-mtvu-batch" :
+																  "off (opt in with /data/PS4SX2/vm-mtvu-batch)");
 	// (AI-assisted) perf-test8: opt-in SPU2 mixing on its own core (default 1, vm-cores.txt SPU2=N).
 	// (AI-assisted) perf-test9: without thread affinity the worker would stay on the EE's core and starve.
 	SPU2Thread::g_enabled = access("/data/PS4SX2/vm-spu2-thread", F_OK) == 0 &&
@@ -1136,7 +1142,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test19\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test20\n");
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");
 	ProbeLog("Telemetry: PC debug server target from /data/PS4SX2/telemetry.conf (create with 'host=PC_IP port=19423')\n");
