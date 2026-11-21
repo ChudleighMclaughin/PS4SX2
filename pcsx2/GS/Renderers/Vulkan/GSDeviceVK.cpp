@@ -3842,7 +3842,9 @@ GSDevice::PresentResult GSDeviceVK::BeginPresent(bool frame_skip)
 	EndRenderPass();
 #if defined(PCSX2_PS4)
 	// The previous frame's flip must be out before acquiring: VideoOut picks images by frame count.
-	PS4CompleteDeferredFlip(UINT64_MAX);
+	// (AI-assisted) perf-test14: a skipped frame acquires nothing, so it only polls; blocking here held the
+	// GS thread for the whole GPU time of the frame just submitted, once per game frame.
+	PS4CompleteDeferredFlip((frame_skip && m_ps4_skip_nowait) ? 0 : UINT64_MAX);
 #endif
 
 	// Check if the device was lost.
@@ -4199,6 +4201,9 @@ bool GSDeviceVK::CreateDeviceAndSwapChain()
 	}
 	m_ps4_async_flip = access("/data/PS4SX2/vm-sync-flip", F_OK) != 0;
 	m_ps4_defer_next_flip = m_ps4_flip_deferred = false;
+	m_ps4_skip_nowait = m_ps4_async_flip && access("/data/PS4SX2/vm-gs-skip-nowait", F_OK) == 0;
+	Console.WriteLn("PS4 GS: skipped frames %s the pending flip (/data/PS4SX2/vm-gs-skip-nowait)",
+		m_ps4_skip_nowait ? "only poll" : "wait for");
 	Console.WriteLn("PS4 GS: VideoOut flip %s (create /data/PS4SX2/vm-sync-flip for the old GPU wait per frame)",
 		m_ps4_async_flip ? "deferred until the frame completes" : "waits for the GPU in the present call");
 #else

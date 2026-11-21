@@ -305,6 +305,8 @@ private:
 	bool m_ps4_async_flip = true;
 	bool m_ps4_defer_next_flip = false;
 	bool m_ps4_flip_deferred = false;
+	// (AI-assisted) perf-test14: /data/PS4SX2/vm-gs-skip-nowait; a skipped (duplicate) frame only polls the pending flip.
+	bool m_ps4_skip_nowait = false;
 #endif
 
 	bool m_last_submit_failed = false;
