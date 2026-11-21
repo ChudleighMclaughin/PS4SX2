@@ -178,7 +178,7 @@ namespace PS4VkReplay
 		uint8_t* s_body = nullptr; // record being written
 		uint32_t s_total = 0;
 
-		std::atomic<unsigned long long> s_deferred{0}, s_drains{0}, s_drain_tsc{0}, s_ring_waits{0}, s_fallbacks{0},
+		std::atomic<unsigned long long> s_replayed{0}, s_drains{0}, s_drain_tsc{0}, s_ring_waits{0}, s_fallbacks{0},
 			s_sleeps{0};
 
 		constexpr size_t R8(size_t n) { return (n + 7) & ~size_t(7); }
@@ -239,7 +239,7 @@ namespace PS4VkReplay
 			h->exec = exec;
 			s_wpos += s_total;
 			s_write.store(s_wpos, std::memory_order_seq_cst);
-			s_deferred.fetch_add(1, std::memory_order_relaxed);
+			s_replayed.fetch_add(1, std::memory_order_relaxed);
 			if (s_sleeping.load(std::memory_order_seq_cst))
 			{
 				std::lock_guard lock(s_mutex);
@@ -755,7 +755,7 @@ namespace PS4VkReplay
 		{
 			std::snprintf(out, size,
 				"GS replay cumulative: started=%d deferred=%llu drains=%llu drain_ms=%.1f ring_full_waits=%llu direct_fallbacks=%llu worker_sleeps=%llu",
-				s_started ? 1 : 0, s_deferred.load(std::memory_order_relaxed), s_drains.load(std::memory_order_relaxed),
+				s_started ? 1 : 0, s_replayed.load(std::memory_order_relaxed), s_drains.load(std::memory_order_relaxed),
 				s_drain_tsc.load(std::memory_order_relaxed) / 1.6e6, s_ring_waits.load(std::memory_order_relaxed),
 				s_fallbacks.load(std::memory_order_relaxed), s_sleeps.load(std::memory_order_relaxed));
 			return;
