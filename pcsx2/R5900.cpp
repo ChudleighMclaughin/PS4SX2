@@ -428,11 +428,11 @@ static u32 s_orbis_ratio_psxclk = 0;
 static float s_orbis_ratio = 8.0f;
 
 // (AI-assisted) perf-test23: opt-in (vm-iop-batch, ps4/vm/main.cpp). The IOP runs in bigger slices: an event
-// test leaves it alone while it is less than kPS4IopBatchCycles EE cycles behind, has no timed event of its
+// test leaves it alone while it is less than g_ps4_iop_batch_cycles EE cycles behind, has no timed event of its
 // own inside that lag and no interrupt pending, so roughly every other IOP slice (enter/exit of its
 // recompiled code plus iopEventTest) is skipped. The IOP can lag the EE by up to that much more than before.
 bool g_ps4_iop_batch = false;
-static constexpr s32 kPS4IopBatchCycles = 2048;
+s32 g_ps4_iop_batch_cycles = 2048; // perf-test24: vm-iop-batch.txt (ps4/vm/main.cpp) can change it
 
 // Shared portion of the branch test, called from both the Interpreter
 // and the recompiler.  (moved here to help alleviate redundant code)
@@ -481,7 +481,7 @@ __fi void _cpuEventTest_Shared()
 
 	// Signed gap: an overdue IOP event (gap <= 0) never defers.
 	const s64 ps4_iop_gap = static_cast<s64>(psxRegs.iopNextEventCycle - psxRegs.cycle);
-	const bool ps4_iop_defer = g_ps4_iop_batch && EEsCycle > 0 && EEsCycle < kPS4IopBatchCycles &&
+	const bool ps4_iop_defer = g_ps4_iop_batch && EEsCycle > 0 && EEsCycle < g_ps4_iop_batch_cycles &&
 		ps4_iop_gap > 0 && static_cast<float>(EEsCycle) < static_cast<float>(ps4_iop_gap) * s_orbis_ratio &&
 		psxRegs.interrupt == 0 && (psxHu32(HW_ISTAT) & psxHu32(HW_IMASK)) == 0; // perf-test23
 
