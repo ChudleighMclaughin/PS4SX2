@@ -757,6 +757,11 @@ static void* RunVM(void*)
 	// default when GameDB has no entry. Needs proper testing across titles.
 	settings->SetBoolValue("EmuCore/GS", "UserHacks", false);
 	settings->SetBoolValue("EmuCore/GS", "UserHacks_DisablePartialInvalidation", gs_perf_defaults);
+	// (AI-assisted) perf-test35: opt-in no hardware mipmapping (vm-no-mipmap). Mip levels mean extra texture reads
+	// and uploads on the GS thread, which limits Shadow of the Colossus. Distant textures can shimmer without it.
+	const bool no_mipmap = access("/data/PS4SX2/vm-no-mipmap", F_OK) == 0;
+	settings->SetBoolValue("EmuCore/GS", "hw_mipmap", !no_mipmap);
+	ProbeLog("GS hardware mipmapping: %s\n", no_mipmap ? "off (vm-no-mipmap)" : "on");
 	ProbeLog("GS perf defaults (paltex, preload frame, no partial invalidation): %s\n",
 		gs_perf_defaults ? "on" : "off by vm-no-gs-perf-defaults marker");
 	// (AI-assisted) Triple VideoOut (ImageCount=3) with VsyncQueueSize=3 queues 2 extra frames
@@ -1175,7 +1180,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test34\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test35\n");
 	// (AI-assisted) perf-test26: the first start of this build creates the recommended switch folders once
 	// (tested on GTA San Andreas, Shadow of the Colossus and God of War). vm-defaults-v1 records that it
 	// happened, so a folder deleted afterwards stays off.
