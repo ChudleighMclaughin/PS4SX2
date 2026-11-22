@@ -15,9 +15,85 @@
 #include <algorithm>
 #include <cfloat>
 #include <cstdio>
+#include <time.h>
 #include <unistd.h>
 
 extern void ProbeLog(const char* format, ...);
+
+// (AI-assisted) perf-test32: RAM, CPU and temperature for the stats bar. All weak: a call the firmware or
+// SDK doesn't provide shows "N/A" instead of failing the link. Refreshed every 2 s from RenderOSD.
+struct PS4DirectMemoryQueryInfo
+{
+	long start;
+	long end;
+	int memoryType;
+};
+extern "C" int sceKernelDirectMemoryQuery(long offset, int flags, PS4DirectMemoryQueryInfo* info, size_t size) __attribute__((weak));
+extern "C" int sceKernelConfiguredFlexibleMemorySize(size_t* size) __attribute__((weak));
+extern "C" int sceKernelAvailableFlexibleMemorySize(size_t* size); // also used by HostSysPS4.cpp
+extern "C" int sceKernelGetCpuTemperature(int* temperature) __attribute__((weak));
+#ifndef CLOCK_PROCESS_CPUTIME_ID
+#define CLOCK_PROCESS_CPUTIME_ID 15 // FreeBSD value
+#endif
+
+namespace
+{
+	struct PS4SystemStats
+	{
+		double ram_mb = -1.0; // direct memory allocated + flexible memory in use
+		double cpu_pct = -1.0; // process CPU time over the 6 game cores
+		int temp_c = -1;
+	};
+
+	PS4SystemStats SampleSystemStats()
+	{
+		static PS4SystemStats s_stats;
+		static timespec s_last_wall{}, s_last_cpu{};
+		timespec wall{};
+		clock_gettime(CLOCK_MONOTONIC, &wall);
+		const double since = (wall.tv_sec - s_last_wall.tv_sec) + (wall.tv_nsec - s_last_wall.tv_nsec) / 1e9;
+		if (s_last_wall.tv_sec != 0 && since < 2.0)
+			return s_stats;
+
+		double ram = -1.0;
+		if (sceKernelDirectMemoryQuery)
+		{
+			// Every allocated direct-memory range (GPU and CPU buffers), FIND_NEXT from offset 0.
+			unsigned long long direct = 0;
+			long offset = 0;
+			for (int i = 0; i < 4096; i++)
+			{
+				PS4DirectMemoryQueryInfo info{};
+				if (sceKernelDirectMemoryQuery(offset, 1, &info, sizeof(info)) != 0 || info.end <= offset)
+					break;
+				direct += static_cast<unsigned long long>(info.end - info.start);
+				offset = info.end;
+			}
+			ram = direct / (1024.0 * 1024.0);
+			size_t configured = 0, available = 0;
+			if (sceKernelConfiguredFlexibleMemorySize && sceKernelConfiguredFlexibleMemorySize(&configured) == 0 &&
+				sceKernelAvailableFlexibleMemorySize(&available) == 0 && configured >= available)
+				ram += (configured - available) / (1024.0 * 1024.0);
+		}
+		s_stats.ram_mb = ram;
+
+		timespec cpu{};
+		if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu) == 0)
+		{
+			if (s_last_wall.tv_sec != 0 && since > 0.0)
+			{
+				const double used = (cpu.tv_sec - s_last_cpu.tv_sec) + (cpu.tv_nsec - s_last_cpu.tv_nsec) / 1e9;
+				s_stats.cpu_pct = std::clamp(100.0 * used / (since * 6.0), 0.0, 100.0);
+			}
+			s_last_cpu = cpu;
+		}
+
+		int temp = 0;
+		s_stats.temp_c = (sceKernelGetCpuTemperature && sceKernelGetCpuTemperature(&temp) == 0) ? temp : -1;
+		s_last_wall = wall;
+		return s_stats;
+	}
+} // namespace
 
 namespace InputRecordingUI
 {
@@ -206,7 +282,8 @@ namespace ImGuiManager
 		// (AI-assisted) Use the GS thread's existing samples; avoid CPU/GS sharing.
 		if (!s_show_performance_hud || VMManager::GetState() != VMState::Running || PerformanceMetrics::GetFPS() <= 0.0f)
 			return;
-		char fields[6][64];
+		constexpr unsigned kFields = 9; // perf-test32: + RAM, CPU, temperature
+		char fields[kFields][64];
 		if (PerformanceMetrics::IsInternalFPSValid())
 			std::snprintf(fields[0], sizeof(fields[0]), "Game ~%.1f FPS", PerformanceMetrics::GetInternalFPS());
 		else
@@ -228,6 +305,19 @@ namespace ImGuiManager
 			std::snprintf(fields[4], sizeof(fields[4]), "GS N/A");
 			std::snprintf(fields[5], sizeof(fields[5]), "VU1 N/A");
 		}
+		const PS4SystemStats sys = SampleSystemStats();
+		if (sys.ram_mb >= 0.0)
+			std::snprintf(fields[6], sizeof(fields[6]), "RAM %.2f GB", sys.ram_mb / 1024.0);
+		else
+			std::snprintf(fields[6], sizeof(fields[6]), "RAM N/A");
+		if (sys.cpu_pct >= 0.0)
+			std::snprintf(fields[7], sizeof(fields[7]), "CPU %.0f%%", sys.cpu_pct);
+		else
+			std::snprintf(fields[7], sizeof(fields[7]), "CPU N/A");
+		if (sys.temp_c >= 0)
+			std::snprintf(fields[8], sizeof(fields[8]), "Temp %d C", sys.temp_c); // no degree sign: not every font has it
+		else
+			std::snprintf(fields[8], sizeof(fields[8]), "Temp N/A");
 		const ImVec2 display = ImGui::GetIO().DisplaySize;
 		if (display.x <= 0.0f || display.y <= 0.0f)
 			return;
@@ -237,12 +327,12 @@ namespace ImGuiManager
 		float font_size = 22.0f * scale;
 		ImFont* font = ImGui::GetFont();
 		constexpr const char* separator = "  |  ";
-		float widths[6];
+		float widths[kFields];
 		float separator_width = 0.0f;
 		const auto measure = [&]() {
 			separator_width = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, separator).x;
-			float width = separator_width * 5;
-			for (unsigned i = 0; i < 6; i++)
+			float width = separator_width * (kFields - 1);
+			for (unsigned i = 0; i < kFields; i++)
 			{
 				widths[i] = font->CalcTextSizeA(font_size, FLT_MAX, 0.0f, fields[i]).x;
 				width += widths[i];
@@ -266,15 +356,18 @@ namespace ImGuiManager
 			IM_COL32(255, 209, 102, 255), // EE: amber
 			IM_COL32(189, 160, 255, 255), // GS: lilac
 			IM_COL32(255, 155, 190, 255), // VU1: pink
+			IM_COL32(140, 220, 210, 255), // RAM: teal
+			IM_COL32(255, 180, 120, 255), // CPU: orange
+			IM_COL32(255, 120, 110, 255), // temperature: red
 		};
 		ImDrawList* draw = ImGui::GetBackgroundDrawList();
 		draw->AddRectFilled(ImVec2(x - padding, top),
 			ImVec2(x + row_width + padding, top + font_size + 20.0f * scale), IM_COL32(4, 13, 24, 200), 8.0f * scale);
-		for (unsigned i = 0; i < 6; i++)
+		for (unsigned i = 0; i < kFields; i++)
 		{
 			draw->AddText(font, font_size, ImVec2(x, top + 10.0f * scale), colors[i], fields[i]);
 			x += widths[i];
-			if (i < 5)
+			if (i < kFields - 1)
 			{
 				draw->AddText(font, font_size, ImVec2(x, top + 10.0f * scale), IM_COL32(111, 137, 162, 255), separator);
 				x += separator_width;
