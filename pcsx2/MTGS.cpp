@@ -19,6 +19,7 @@
 #include "common/WrappedMemCopy.h"
 
 #include <immintrin.h> // vk-285-124: _mm_pause (Gif_MTGS_WaitRead)
+#include <unistd.h> // (AI-assisted) perf-test31: access() for vm-gs-spin-long
 #include <list>
 #include <mutex>
 #include <thread>
@@ -637,7 +638,11 @@ void MTGS::MainLoop()
 							PS4_WORKER_SCOPE(GSWaitVU);
 							orbis_flush_path1_read();
 							mtvu_lock.unlock();
-							for (u32 waited = 0; waited < 20000 && got == 0;)
+							// (AI-assisted) perf-test31: vm-gs-spin-long spins ~250 us instead of ~20 us. In God of
+							// War the VU1 thread was the bottleneck while this thread slept between packets, so each
+							// XGKICK post had to wake it through the kernel (~12% of the VU1 thread in syscalls).
+							static const u32 s_xgkick_spin_ns = access("/data/PS4SX2/vm-gs-spin-long", F_OK) == 0 ? 250000 : 20000;
+							for (u32 waited = 0; waited < s_xgkick_spin_ns && got == 0;)
 							{
 								waited += ShortSpin();
 								got = vu1Thread.semaXGkick.TryWaitAll();

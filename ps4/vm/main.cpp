@@ -1169,7 +1169,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test30\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test31\n");
 	// (AI-assisted) perf-test26: the first start of this build creates the recommended switch folders once
 	// (tested on GTA San Andreas, Shadow of the Colossus and God of War). vm-defaults-v1 records that it
 	// happened, so a folder deleted afterwards stays off.
@@ -1186,6 +1186,14 @@ int main()
 		}
 		mkdir("/data/PS4SX2/vm-defaults-v1", 0777);
 		ProbeLog("First-run defaults: recommended switch folders created (delete vm-defaults-v1 to recreate them)\n");
+	}
+	// (AI-assisted) perf-test31: switches added after v1, created once by their own marker so folders deleted
+	// on purpose from the v1 set are not brought back. vm-vif-dynarec: God of War 59.5% -> 68.5% (perf-test30).
+	if (access("/data/PS4SX2/vm-defaults-v2", F_OK) != 0)
+	{
+		mkdir("/data/PS4SX2/vm-vif-dynarec", 0777);
+		mkdir("/data/PS4SX2/vm-defaults-v2", 0777);
+		ProbeLog("First-run defaults v2: vm-vif-dynarec created (delete vm-defaults-v2 to recreate it)\n");
 	}
 	// (AI-assisted) diag-time-sampler: opt-in time profile. A helper thread interrupts the EE, VU1, GS and
 	// GS replay threads every millisecond and logs where they were (logs/samples.log, every 10 s), and
