@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <map>
 
 extern "C" char __text_start[];  // defined by the OpenOrbis link.x at the start of .text
 extern "C" int pthread_getthreadid_np(void);  // libkernel (FreeBSD libthr)
@@ -90,6 +91,25 @@ void writeLine(int fd, const char* text) {
 
 void noteHotJit(uint64_t address, int count);
 
+// (AI-assisted) perf-test36: every JIT block registered through ps4_jitmap_write (start -> size), so the report
+// can group a thread's JIT samples by block. JIT time is spread over thousands of 16-byte buckets seen once
+// per window; listed as buckets it fell under the old cut and was lost.
+std::map<uint64_t, uint32_t> g_jit_blocks;
+pthread_mutex_t g_jit_blocks_lock = PTHREAD_MUTEX_INITIALIZER;
+
+uint64_t jitBlockStart(uint64_t address) {
+    pthread_mutex_lock(&g_jit_blocks_lock);
+    uint64_t start = 0;
+    auto it = g_jit_blocks.upper_bound(address);
+    if (it != g_jit_blocks.begin()) {
+        --it;
+        if (address < it->first + it->second)
+            start = it->first;
+    }
+    pthread_mutex_unlock(&g_jit_blocks_lock);
+    return start;
+}
+
 // Aggregates one thread's window: sorts the samples in place and prints the top entries.
 void report(int fd, ThreadSamples& t, double window_start) {
     // Copy first: the handler keeps writing into t.samples once count is reset.
@@ -109,7 +129,13 @@ void report(int fd, ThreadSamples& t, double window_start) {
             continue;
         }
         const bool eboot = s[i] >= text && s[i] < text + kTextWindow;
-        s[i] = eboot ? ((s[i] - text) & ~0xFULL) : (s[i] | (1ULL << 63)) & ~0xFULL;
+        if (eboot) {
+            s[i] = (s[i] - text) & ~0xFULL;
+        } else {
+            // perf-test36: JIT samples count against their block's start (4 KiB page if unknown).
+            const uint64_t block = jitBlockStart(s[i]);
+            s[i] = (block ? block : (s[i] & ~0xFFFULL)) | (1ULL << 63);
+        }
     }
     std::sort(s, s + n);
     struct Entry { uint64_t key; int count; };
@@ -133,19 +159,21 @@ void report(int fd, ThreadSamples& t, double window_start) {
     // Every bucket seen at least twice (up to 1500): a function spread over many 16-byte buckets
     // fell below a top-60 cut, hiding about half of a busy thread. Aggregated per function
     // offline (symbolizer, JIT block map).
-    for (int i = 0; i < unique && i < 1500 && entries[i].count >= 2; i++) {
+    // perf-test36: every entry (up to 4000) at 3 decimals; the old 1-decimal "%5.1f" printed a 1-2 sample
+    // bucket (0.02-0.04% of ~5000) as 0.0, which dropped it from the offline sums.
+    for (int i = 0; i < unique && i < 4000; i++) {
         if (entries[i].key >> 63) {
             const uint64_t address = entries[i].key & ~(1ULL << 63);
-            snprintf(line, sizeof(line), "  %5.1f%% jit 0x%llx\n", 100.0 * entries[i].count / n,
+            snprintf(line, sizeof(line), "  %6.3f%% jit 0x%llx\n", 100.0 * entries[i].count / n,
                      static_cast<unsigned long long>(address));
             noteHotJit(address, entries[i].count);
         }
         else if (entries[i].key & kCallerTag)
-            snprintf(line, sizeof(line), "  %5.1f%% sys 0x%llx\n",
+            snprintf(line, sizeof(line), "  %6.3f%% sys 0x%llx\n",
                      100.0 * entries[i].count / n,
                      static_cast<unsigned long long>(entries[i].key & ~kCallerTag));
         else
-            snprintf(line, sizeof(line), "  %5.1f%% elf 0x%llx\n", 100.0 * entries[i].count / n,
+            snprintf(line, sizeof(line), "  %6.3f%% elf 0x%llx\n", 100.0 * entries[i].count / n,
                      static_cast<unsigned long long>(entries[i].key));
         writeLine(fd, line);
     }
@@ -584,6 +612,13 @@ extern "C" void ps4_jitmap_enable() {
 extern "C" void ps4_jitmap_write(const char* group, const void* ptr, size_t size, unsigned pc, const char* symbol) {
     if (!g_jitmap)
         return;
+    {
+        // perf-test36: also keep the block for the report's grouping (a reused address replaces the old one).
+        const uint64_t start = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(ptr));
+        pthread_mutex_lock(&g_jit_blocks_lock);
+        g_jit_blocks[start] = static_cast<uint32_t>(size);
+        pthread_mutex_unlock(&g_jit_blocks_lock);
+    }
     pthread_mutex_lock(&g_jitmap_lock);
     fprintf(g_jitmap, "%s %08x %llx %zx %s\n", group && group[0] ? group : "-", pc,
             static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(ptr)), size, symbol ? symbol : "");
