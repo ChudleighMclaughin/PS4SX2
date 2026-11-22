@@ -162,6 +162,18 @@ namespace PS4DmaWorker
 		}
 	} // namespace
 
+	bool g_vsync_nowait = false;
+
+	int DmacWriteReason(u32 mem, u32 value)
+	{
+		const u32 reg = mem & 0xffff; // as the handlers see it (eeHw index)
+		if (reg == (DMAC_CTRL & 0xffff))
+			return value != psHu32(DMAC_CTRL) ? 5 : 0;
+		if (reg == (DMAC_ENABLEW & 0xffff))
+			return value != psHu32(DMAC_ENABLER) ? 12 : 0;
+		return 0;
+	}
+
 	bool OnWorker() { return t_on_worker; }
 	bool OnEE() { return t_on_ee; }
 	void Schedule(int n) { s_pending |= 1u << n; }

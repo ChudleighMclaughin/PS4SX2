@@ -40,7 +40,7 @@ void _hwWrite32( u32 mem, u32 value )
 {
 	pxAssume( (mem & 0x03) == 0 );
 	++g_ps4_hw_writes[page != 3 ? (page & 15) : ((mem & 0xc00) == 0xc00 ? 16 : (mem & 0xc00) == 0x800 ? 17 : 3)];
-	PS4DmaWorkerSyncHw<page>(mem, true); // perf-test38
+	PS4DmaWorkerSyncHw<page>(mem, true, &value); // perf-test38/40
 
 	// Notes:
 	// All unknown registers on the EE are "reserved" as discarded writes and indeterminate

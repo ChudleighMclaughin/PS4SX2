@@ -412,9 +412,18 @@ namespace PS4DmaWorker
 	void DeferIntcIrq(int n);
 	void EEService(); // EE event test: apply a finished job, hand over new VIF1/GIF work
 	// Why the EE waited (perf-test39, logged per reason): 1 GIF/VIF regs, 2 VIF1/GIF FIFO, 3 VIF1 DMA regs, 4 GIF DMA
-	// regs, 5 DMAC/D_ENABLEW writes, 6 GS CSR, 7 GS ring write, 8 WaitGS, 9 MTVU ring write, 10 WaitVU, 11 reset.
+	// regs, 5 D_CTRL change (perf-test40; any DMAC write before), 6 GS CSR, 7 GS ring write, 8 WaitGS, 9 MTVU ring
+	// write, 10 WaitVU, 11 reset, 12 D_ENABLEW change (perf-test40).
 	void SyncEE(int reason); // EE: wait for a running job and apply it
 	void Start();
+	// perf-test40: the sync reason for a 32-bit write to the DMAC control page (0x1000E000) or D_ENABLEW, 0 if a running
+	// job can't see it. Only D_CTRL and D_ENABLEW, and only a write that changes them: D_STAT is the EE's (the job's
+	// interrupts are raised by the EE), D_PCR only feeds the EE's CPCOND, and D_SQWC/D_RBSR/D_RBOR/D_STADR are only read
+	// for MFIFO or stall control, which a job never has (CanOffload) unless D_CTRL changes. In GTA San Andreas and
+	// Shadow of the Colossus the EE waited ~8 ms per DMAC write, ~6% of its time (PKG-45).
+	int DmacWriteReason(u32 mem, u32 value);
+	// perf-test40 (vm-dma-worker-vsync): the EE posts a vsync while a job runs, between the worker's GS packets.
+	extern bool g_vsync_nowait;
 } // namespace PS4DmaWorker
 
 // EE thread only (a no-op on the worker, VU1, GS and host threads, so none of them can wait on a worker that may be
@@ -426,10 +435,11 @@ static __fi void PS4DmaWorkerSync(int reason = 0)
 }
 
 // perf-test38: the EE's hardware register handlers (HwRead.cpp/HwWrite.cpp) wait for a DMA worker job before any access
-// to the GIF/VIF registers (page 3), the VIF1 and GIF FIFOs (5, 6), the VIF1 and GIF DMA channels (9, 10), and before
-// writes to the DMAC control registers other than D_STAT (page 14) and to D_ENABLEW (0x1000F590).
+// to the GIF/VIF registers (page 3), the VIF1 and GIF FIFOs (5, 6), the VIF1 and GIF DMA channels (9, 10), and
+// (perf-test40) before 32-bit writes that change D_CTRL or D_ENABLEW (DmacWriteReason; 64/128-bit writes to those
+// pages end up in the 32-bit handler, so they pass no value).
 template <unsigned page>
-static __fi void PS4DmaWorkerSyncHw(u32 mem, bool write)
+static __fi void PS4DmaWorkerSyncHw(u32 mem, bool write, const u32* value = nullptr)
 {
 	if constexpr (page == 0x03)
 		PS4DmaWorkerSync(1);
@@ -439,15 +449,13 @@ static __fi void PS4DmaWorkerSyncHw(u32 mem, bool write)
 		PS4DmaWorkerSync(3);
 	else if constexpr (page == 0x0A)
 		PS4DmaWorkerSync(4);
-	else if constexpr (page == 0x0E)
+	else if constexpr (page == 0x0E || page == 0x0F)
 	{
-		if (write && (mem & 0xffff) != 0xe010)
-			PS4DmaWorkerSync(5);
-	}
-	else if constexpr (page == 0x0F)
-	{
-		if (write && (mem & 0xffff) == 0xf590)
-			PS4DmaWorkerSync(5);
+		if (value && PS4DmaWorker::g_state.load(std::memory_order_acquire) != 0)
+		{
+			if (const int reason = PS4DmaWorker::DmacWriteReason(mem, *value))
+				PS4DmaWorkerSync(reason);
+		}
 	}
 }
 extern uint intcInterrupt();

@@ -148,6 +148,41 @@ namespace MTGS
 #endif
 } // namespace MTGS
 
+// (AI-assisted) perf-test40 (vm-dma-worker-vsync): during a DMA worker job (PS4DmaWorker.cpp) the GS ring has two
+// producers, the worker and the EE's vsync. Each holds this lock from its packet's GenericStall to its commit, so a
+// vsync waits for the worker's current packet instead of the whole job (~9 ms per vsync wait in GTA San Andreas,
+// PKG-45). The vsync then lands between the job's GS packets, as on a PS2 where DMA runs on past a vsync. Only the
+// worker and the EE's vsync take it; the EE's other ring writes still wait for the job. Needs proper testing.
+static std::atomic<bool> s_ps4_ring_lock{false};
+static thread_local int t_ps4_ring_depth = 0;
+static __fi bool PS4RingLockOn()
+{
+	return t_ps4_ring_depth || (PS4DmaWorker::g_vsync_nowait && PS4DmaWorker::OnWorker());
+}
+static void PS4RingLock()
+{
+	if (t_ps4_ring_depth++ == 0 && s_ps4_ring_lock.exchange(true, std::memory_order_acquire))
+	{
+		// The vsync holding the lock may be waiting on the GS, the GS on a VU1 XGKICK, and VU1 on a kick the worker
+		// (the MTVU producer during a job) has batched: send it before waiting.
+		if (PS4DmaWorker::OnWorker())
+			vu1Thread.FlushKick();
+		while (s_ps4_ring_lock.exchange(true, std::memory_order_acquire))
+			_mm_pause();
+	}
+}
+static void PS4RingUnlock()
+{
+	if (--t_ps4_ring_depth == 0)
+		s_ps4_ring_lock.store(false, std::memory_order_release);
+}
+struct PS4RingGuard
+{
+	const bool on = PS4RingLockOn();
+	PS4RingGuard() { if (on) PS4RingLock(); }
+	~PS4RingGuard() { if (on) PS4RingUnlock(); }
+};
+
 // =====================================================================================================
 //  MTGS Threaded Class Implementation
 // =====================================================================================================
@@ -318,6 +353,11 @@ void MTGS::PostVsyncStart(bool registers_written)
 	// 256-byte copy is only a few dozen cycles -- executed 60 times a second -- so probably
 	// not worth the effort or overhead of trying to selectively avoid it.
 
+	// perf-test40: with vm-dma-worker-vsync, hold the ring lock instead of waiting for a running worker job (above).
+	const bool ps4_ring_locked = PS4DmaWorker::g_vsync_nowait && PS4DmaWorker::OnEE();
+	if (ps4_ring_locked)
+		PS4RingLock();
+
 	uint packsize = sizeof(RingCmdPacket_Vsync) / 16;
 	PrepDataPacket(Command::VSync, packsize);
 	MemCopy_WrappedDest((u128*)PS2MEM_GS, RingBuffer.m_Ring, s_packet_writepos, RingBufferSize, 0xf);
@@ -334,6 +374,8 @@ void MTGS::PostVsyncStart(bool registers_written)
 	// Vsyncs should always start the GS thread, regardless of how little has actually be queued.
 	if (s_CopyDataTally != 0)
 		SetEvent();
+	if (ps4_ring_locked)
+		PS4RingUnlock(); // perf-test40
 
 	// If the MTGS is allowed to queue a lot of frames in advance, it creates input lag.
 	// Use the Queued FrameCount to stall the EE if another vsync (or two) are already queued
@@ -993,11 +1035,14 @@ void MTGS::SendDataPacket()
 	s_packet_size = 0;
 
 	//m_PacketLocker.Release();
+	if (t_ps4_ring_depth)
+		PS4RingUnlock(); // perf-test40: taken in PrepDataPacket
 }
 
 void MTGS::GenericStall(uint size)
 {
-	PS4DmaWorkerSync(7); // perf-test38: one GS ring producer at a time (the EE waits for a DMA worker job)
+	if (!t_ps4_ring_depth) // perf-test40: a vsync holding the ring lock doesn't wait for the job
+		PS4DmaWorkerSync(7); // perf-test38: one GS ring producer at a time (the EE waits for a DMA worker job)
 	// Note on volatiles: m_WritePos is not modified by the GS thread, so there's no need
 	// to use volatile reads here.  We do cache it though, since we know it never changes,
 	// except for calls to RingbufferRestert() -- handled below.
@@ -1120,6 +1165,8 @@ void MTGS::GenericStall(uint size)
 
 void MTGS::PrepDataPacket(Command cmd, u32 size)
 {
+	if (PS4RingLockOn())
+		PS4RingLock(); // perf-test40: released in SendDataPacket
 	s_packet_size = size;
 	++size; // takes into account our RingCommand QWC.
 	GenericStall(size);
@@ -1164,6 +1211,7 @@ __fi void MTGS::_FinishSimplePacket()
 void MTGS::SendSimplePacket(Command type, int data0, int data1, int data2)
 {
 	//ScopedLock locker( m_PacketLocker );
+	PS4RingGuard ps4_ring_guard; // perf-test40
 
 	GenericStall(1);
 	PacketTagType& tag = (PacketTagType&)RingBuffer[s_WritePos.load(std::memory_order_relaxed)];
@@ -1178,6 +1226,7 @@ void MTGS::SendSimplePacket(Command type, int data0, int data1, int data2)
 
 void MTGS::SendSimpleGSPacket(Command type, u32 offset, u32 size, GIF_PATH path)
 {
+	PS4RingGuard ps4_ring_guard; // perf-test40: the tally below too
 	SendSimplePacket(type, (int)offset, (int)size, (int)path);
 
 #if !defined(PCSX2_GS_MTGS_PROBE)
@@ -1193,6 +1242,7 @@ void MTGS::SendSimpleGSPacket(Command type, u32 offset, u32 size, GIF_PATH path)
 void MTGS::SendPointerPacket(Command type, u32 data0, void* data1)
 {
 	//ScopedLock locker( m_PacketLocker );
+	PS4RingGuard ps4_ring_guard; // perf-test40
 
 	GenericStall(1);
 	PacketTagType& tag = (PacketTagType&)RingBuffer[s_WritePos.load(std::memory_order_relaxed)];
