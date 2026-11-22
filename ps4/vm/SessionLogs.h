@@ -40,7 +40,9 @@ namespace PS4SessionLogs
 		// here because ps4_crashlog writes it during the session being archived (MigrateLegacyLogs
 		// has already moved it into logs/), so each archive keeps its crash with its logs.
 		constexpr const char* names[] = {
-			"PCSX2-vm-boot.log", "PCSX2-vm-stdout.log", "PCSX2-vm-stderr.log", "emulog.txt", "crash.log"};
+			"PCSX2-vm-boot.log", "PCSX2-vm-stdout.log", "PCSX2-vm-stderr.log", "emulog.txt", "crash.log",
+			// (AI-assisted) perf-test29: the time profile (vm-time-profile) stays with its session.
+			"samples.log", "jitmap.txt", "jitcode.bin"};
 		// (AI-assisted) Keep the last KEEP sessions per platform: <dir> is the newest, then
 		// <dir>.2 ... <dir>.KEEP. Rotate only when there is a session to archive.
 		constexpr int KEEP = 5;
