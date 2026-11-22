@@ -462,12 +462,13 @@ void VMHostPoll()
 					static_cast<unsigned long long>(g_ps4_hw_reads[i]), static_cast<unsigned long long>(g_ps4_hw_writes[i]));
 			ProbeLog("%s\n", hw_line);
 			// perf-test38: DMA worker, cumulative.
-			extern u64 g_ps4_dma_jobs, g_ps4_dma_giveups, g_ps4_dma_ee_waits;
+			extern u64 g_ps4_dma_jobs, g_ps4_dma_giveups, g_ps4_dma_ee_waits, g_ps4_dma_preempts;
 			extern double g_ps4_dma_ee_wait_ms, g_ps4_dma_busy_ms;
 			if (PS4DmaWorker::g_enabled)
 			{
-				ProbeLog("DMA worker cumulative: jobs=%llu giveups=%llu ee_waits=%llu ee_wait_ms=%.1f worker_busy_ms=%.1f\n",
+				ProbeLog("DMA worker cumulative: jobs=%llu giveups=%llu preempts=%llu ee_waits=%llu ee_wait_ms=%.1f worker_busy_ms=%.1f\n",
 					static_cast<unsigned long long>(g_ps4_dma_jobs), static_cast<unsigned long long>(g_ps4_dma_giveups),
+					static_cast<unsigned long long>(g_ps4_dma_preempts),
 					static_cast<unsigned long long>(g_ps4_dma_ee_waits), g_ps4_dma_ee_wait_ms, g_ps4_dma_busy_ms);
 				// perf-test39: the EE's waits by reason (R5900.h PS4DmaWorker::SyncEE), count/ms, cumulative.
 				extern u64 g_ps4_dma_wait_n[16];
@@ -947,6 +948,9 @@ static void* RunVM(void*)
 	// (AI-assisted) perf-test40: the EE's vsync doesn't wait for a running worker job (MTGS.cpp PS4RingLock).
 	PS4DmaWorker::g_vsync_nowait = PS4DmaWorker::g_enabled && access("/data/PS4SX2/vm-dma-worker-vsync", F_OK) == 0;
 	ProbeLog("DMA worker vsync no-wait: %s\n", PS4DmaWorker::g_vsync_nowait ? "on (/data/PS4SX2/vm-dma-worker-vsync)" : "off");
+	// (AI-assisted) perf-test42: a running job hands its rest back when the EE waits on it (PS4DmaWorker.cpp RunJob).
+	PS4DmaWorker::g_preempt = PS4DmaWorker::g_enabled && access("/data/PS4SX2/vm-dma-worker-preempt", F_OK) == 0;
+	ProbeLog("DMA worker preempt: %s\n", PS4DmaWorker::g_preempt ? "on (/data/PS4SX2/vm-dma-worker-preempt)" : "off");
 	// (AI-assisted) perf-test25: vm-iop-batch-loose also lets IOP timer events run late (turns batching on too).
 	g_ps4_iop_batch_loose = access("/data/PS4SX2/vm-iop-batch-loose", F_OK) == 0;
 	g_ps4_iop_batch = g_ps4_iop_batch || g_ps4_iop_batch_loose;
@@ -1226,7 +1230,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test41\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test42\n");
 	// (AI-assisted) perf-test26: the first start of this build creates the recommended switch folders once
 	// (tested on GTA San Andreas, Shadow of the Colossus and God of War). vm-defaults-v1 records that it
 	// happened, so a folder deleted afterwards stays off.

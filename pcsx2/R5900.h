@@ -424,6 +424,8 @@ namespace PS4DmaWorker
 	int DmacWriteReason(u32 mem, u32 value);
 	// perf-test40 (vm-dma-worker-vsync): the EE posts a vsync while a job runs, between the worker's GS packets.
 	extern bool g_vsync_nowait;
+	// perf-test42 (vm-dma-worker-preempt): a running job hands its rest back as soon as the EE waits on it.
+	extern bool g_preempt;
 } // namespace PS4DmaWorker
 
 // EE thread only (a no-op on the worker, VU1, GS and host threads, so none of them can wait on a worker that may be

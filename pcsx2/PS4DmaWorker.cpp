@@ -24,6 +24,7 @@
 #include <thread>
 
 u64 g_ps4_dma_jobs, g_ps4_dma_giveups, g_ps4_dma_ee_waits; // EE thread
+u64 g_ps4_dma_preempts; // worker thread, perf-test42
 double g_ps4_dma_ee_wait_ms, g_ps4_dma_busy_ms; // EE thread / worker thread
 // perf-test39: the EE's waits by reason (PS4DmaWorker::SyncReason, R5900.h).
 constexpr int kSyncReasons = 16;
@@ -33,6 +34,7 @@ double g_ps4_dma_wait_ms[kSyncReasons];
 namespace PS4DmaWorker
 {
 	bool g_enabled = false;
+	bool g_preempt = false;
 	std::atomic<int> g_state{0};
 
 	namespace
@@ -79,6 +81,16 @@ namespace PS4DmaWorker
 			Common::Timer::Value stall_start = 0;
 			while (s_pending)
 			{
+				// (AI-assisted) perf-test42 (vm-dma-worker-preempt): the EE is waiting, so hand the rest back at this
+				// handler boundary (same path as a give-up) instead of making it wait out the whole job (~7 ms per wait in
+				// GTA San Andreas, PKG-47).
+				if (g_preempt && s_ee_waiting.load(std::memory_order_relaxed))
+				{
+					s_return_mask |= s_pending;
+					s_pending = 0;
+					++g_ps4_dma_preempts;
+					break;
+				}
 				const u32 p = s_pending;
 				s_pending = 0;
 				s_return_mask |= p & ~kJobMask; // anything else scheduled from here is the EE's
