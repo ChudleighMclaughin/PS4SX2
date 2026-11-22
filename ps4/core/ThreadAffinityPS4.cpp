@@ -14,6 +14,7 @@
 // verified by DolphinPS4 until the SDK declaration is corrected.
 extern "C" void* scePthreadSelf();
 extern "C" int scePthreadSetaffinity(void* thread, unsigned long long mask);
+extern "C" void ps4_sampler_register_thread(const char* name); // ps4/runtime/ps4_sampler.cpp
 
 namespace PS4ThreadAffinity
 {
@@ -92,6 +93,12 @@ namespace PS4ThreadAffinity
 	void PinCurrentThread(const char* role, int core)
 	{
 		RememberRole(role);
+		// (AI-assisted) diag-time-sampler: with vm-time-profile, the four busy emulator threads are sampled
+		// (ps4_sampler.cpp, logs/samples.log).
+		static const bool s_time_profile = access("/data/PS4SX2/vm-time-profile", F_OK) == 0;
+		if (s_time_profile && (std::strcmp(role, "EE") == 0 || std::strcmp(role, "VU1") == 0 ||
+								  std::strcmp(role, "GS") == 0 || std::strcmp(role, "GSREPLAY") == 0))
+			ps4_sampler_register_thread(role);
 		if (!IsEnabled())
 		{
 			std::printf("PS4 thread affinity: %s left to scheduler (disabled by marker)\n", role);

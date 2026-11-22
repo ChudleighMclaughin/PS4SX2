@@ -3,10 +3,10 @@
 // PS4 has no perf/Razor access for homebrew, so the app samples itself: a helper thread sends
 // SIGPROF to each registered thread every millisecond, and the handler records the interrupted
 // instruction pointer. Every 10 seconds the samples are aggregated and appended to
-// /data/DolphinPS4/samples.log: per thread, the busiest eboot addresses (ELF virtual addresses,
+// /data/PS4SX2/logs/samples.log: per thread, the busiest eboot addresses (ELF virtual addresses,
 // symbolize with `llvm-symbolizer --obj=<oelf> 0x...`), system module addresses ("sys") and JIT
 // code addresses ("jit", 16-byte buckets). Every 60 s the busiest JIT code (64 KiB chunks) is
-// copied to /data/DolphinPS4/jitcode.bin and the emulated MEM1 to mem1.bin, so the generated x86
+// copied to /data/PS4SX2/logs/jitcode.bin and the emulated MEM1 to mem1.bin, so the generated x86
 // and the guest code behind it can be disassembled offline (blocks: the jit-perf map written by
 // Common/JitRegister).
 //
@@ -28,6 +28,7 @@
 extern "C" char __text_start[];  // defined by the OpenOrbis link.x at the start of .text
 extern "C" int pthread_getthreadid_np(void);  // libkernel (FreeBSD libthr)
 extern "C" void ps4_boot_trace(const char* stage);
+extern "C" void ps4_jitmap_flush();  // below
 
 namespace {
 
@@ -238,7 +239,7 @@ bool isReadable(uint64_t address, uint64_t size) {
 // jitcode.bin: records of {u64 address, u64 size, bytes}. Copied through a buffer first so the
 // kernel never reads JIT memory for the file write.
 void dumpJitCode() {
-    const int fd = open("/data/DolphinPS4/jitcode.bin", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    const int fd = open("/data/PS4SX2/logs/jitcode.bin", O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd >= 0) {
         static uint8_t buffer[0x10000];
         for (int i = 0; i < g_hot_chunk_count; i++) {
@@ -253,7 +254,7 @@ void dumpJitCode() {
     }
     g_hot_chunk_count = 0;
     if (ps4_profile_guest_ram && ps4_profile_guest_ram_size) {
-        const int ram = open("/data/DolphinPS4/mem1.bin", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+        const int ram = open("/data/PS4SX2/logs/mem1.bin", O_WRONLY | O_CREAT | O_TRUNC, 0666);
         if (ram >= 0) {
             static uint8_t copy[0x100000];
             for (uint32_t offset = 0; offset < ps4_profile_guest_ram_size; offset += sizeof(copy)) {
@@ -270,9 +271,16 @@ void dumpJitCode() {
 std::atomic<bool> g_sampler_on{false};
 
 void* samplerThread(void*) {
-    const int fd = open("/data/DolphinPS4/samples.log", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    const int fd = open("/data/PS4SX2/logs/samples.log", O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd < 0)
         return nullptr;
+    {
+        // (AI-assisted) diag-time-sampler: "elf" offsets are relative to this (nm address - text_start).
+        char line[96];
+        snprintf(line, sizeof(line), "text_start=0x%llx\n",
+                 static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(__text_start)));
+        writeLine(fd, line);
+    }
     writeModuleList(fd);
     const double start = now();
     double window_start = start, last_dump = start;
@@ -292,6 +300,7 @@ void* samplerThread(void*) {
             writeModuleList(fd);
             for (int i = 0; i < threads; i++)
                 report(fd, g_threads[i], window_start - start);
+            ps4_jitmap_flush();
             window_start = now();
             if (window_start - last_dump >= 60.0) {
                 dumpJitCode();
@@ -532,8 +541,47 @@ extern "C" double ps4_thread_cpu_seconds(int slot) {
     return g_thread_cpu_ns[slot].load(std::memory_order_relaxed) / 1e9;
 }
 
+// (AI-assisted) diag-time-sampler: JIT block map for the sampler's "jit" addresses, one line per
+// block ("group pc address size [symbol]"), only after ps4_jitmap_enable(). Written by whichever
+// thread compiles (EE, VU1, IOP), so serialized; buffered by stdio.
+namespace {
+FILE* g_jitmap = nullptr;
+pthread_mutex_t g_jitmap_lock = PTHREAD_MUTEX_INITIALIZER;
+}  // namespace
+
+extern "C" void ps4_jitmap_enable() {
+    pthread_mutex_lock(&g_jitmap_lock);
+    if (!g_jitmap)
+        g_jitmap = fopen("/data/PS4SX2/logs/jitmap.txt", "w");
+    pthread_mutex_unlock(&g_jitmap_lock);
+}
+
+extern "C" void ps4_jitmap_write(const char* group, const void* ptr, size_t size, unsigned pc, const char* symbol) {
+    if (!g_jitmap)
+        return;
+    pthread_mutex_lock(&g_jitmap_lock);
+    fprintf(g_jitmap, "%s %08x %llx %zx %s\n", group && group[0] ? group : "-", pc,
+            static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(ptr)), size, symbol ? symbol : "");
+    pthread_mutex_unlock(&g_jitmap_lock);
+}
+
+extern "C" void ps4_jitmap_flush() {
+    pthread_mutex_lock(&g_jitmap_lock);
+    if (g_jitmap)
+        fflush(g_jitmap);
+    pthread_mutex_unlock(&g_jitmap_lock);
+}
+
+// (AI-assisted) diag-time-sampler: PS4SX2 registers its threads without ps4_watch_thread (that also
+// moves the thread to a private heap arena, a Dolphin-port change this emulator has not tested).
 extern "C" void ps4_sampler_register_thread(const char* name) {
-    ps4_watch_thread(name);
+    // A recreated thread takes over its role's slot, so no signal goes to an exited thread.
+    for (int i = 0; i < g_thread_count.load(); i++) {
+        if (g_threads[i].name && strcmp(g_threads[i].name, name) == 0) {
+            g_threads[i].thread.store(pthread_self());
+            return;
+        }
+    }
     const int index = g_thread_count.load();
     if (index >= kMaxThreads)
         return;
@@ -557,7 +605,7 @@ extern "C" void ps4_sampler_start() {
 
     pthread_t thread;
     if (pthread_create(&thread, nullptr, samplerThread, nullptr) == 0)
-        ps4_boot_trace("sampler: started, writing /data/DolphinPS4/samples.log every 10 s");
+        ps4_boot_trace("sampler: started, writing /data/PS4SX2/logs/samples.log every 10 s");
 }
 
 // The menus' Profiler switch: starts the sampler the first time, then pauses / resumes it.

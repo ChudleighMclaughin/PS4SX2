@@ -213,6 +213,16 @@ namespace Perf
 			std::snprintf(full_symbol, std::size(full_symbol), "%s%016" PRIX64, prefix, key);
 		RegisterMethod(ptr, size, full_symbol);
 	}
+#elif defined(PCSX2_PS4_VM_BOOT)
+	// (AI-assisted) diag-time-sampler: with /data/PS4SX2/vm-time-profile, every JIT block goes to
+	// logs/jitmap.txt so the sampler's JIT addresses can be mapped to guest code (ps4_sampler.cpp).
+}
+extern "C" void ps4_jitmap_write(const char* group, const void* ptr, size_t size, unsigned pc, const char* symbol);
+namespace Perf
+{
+	void Group::Register(const void* ptr, size_t size, const char* symbol) { ps4_jitmap_write(m_prefix, ptr, size, 0, symbol); }
+	void Group::RegisterPC(const void* ptr, size_t size, u32 pc) { ps4_jitmap_write(m_prefix, ptr, size, pc, nullptr); }
+	void Group::RegisterKey(const void* ptr, size_t size, const char* prefix, u64 key) { ps4_jitmap_write(m_prefix, ptr, size, static_cast<unsigned>(key), prefix); }
 #elif defined(ORBIS_VULKAN)
 	void Group::Register(const void* ptr, size_t size, const char* symbol) { OrbisJitRegister(m_prefix, ptr, size, 0, symbol); }
 	void Group::RegisterPC(const void* ptr, size_t size, u32 pc) { OrbisJitRegister(m_prefix, ptr, size, pc, nullptr); }

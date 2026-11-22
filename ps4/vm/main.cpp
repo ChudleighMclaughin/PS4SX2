@@ -42,6 +42,8 @@
 // timestamps, the time the command processor spent on submissions (busy) over first start to last end
 // (span). Weak, so a driver without it just skips the heartbeat line.
 extern "C" void ac_ps4_get_gpu_busy(uint64_t* busy_ticks, uint64_t* span_ticks) __attribute__((weak));
+extern "C" void ps4_sampler_start(); // ps4/runtime/ps4_sampler.cpp (diag-time-sampler)
+extern "C" void ps4_jitmap_enable();
 #include "HostPollGate.h"
 #include "GameMenu.h"
 #include "SessionLogs.h"
@@ -1166,7 +1168,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test27\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test28\n");
 	// (AI-assisted) perf-test26: the first start of this build creates the recommended switch folders once
 	// (tested on GTA San Andreas, Shadow of the Colossus and God of War). vm-defaults-v1 records that it
 	// happened, so a folder deleted afterwards stays off.
@@ -1183,6 +1185,15 @@ int main()
 		}
 		mkdir("/data/PS4SX2/vm-defaults-v1", 0777);
 		ProbeLog("First-run defaults: recommended switch folders created (delete vm-defaults-v1 to recreate them)\n");
+	}
+	// (AI-assisted) diag-time-sampler: opt-in time profile. A helper thread interrupts the EE, VU1, GS and
+	// GS replay threads every millisecond and logs where they were (logs/samples.log, every 10 s), and
+	// every JIT block is listed in logs/jitmap.txt so its samples can be tied to guest code.
+	if (access("/data/PS4SX2/vm-time-profile", F_OK) == 0)
+	{
+		ps4_jitmap_enable();
+		ps4_sampler_start();
+		ProbeLog("Time profile: on (/data/PS4SX2/vm-time-profile) -> logs/samples.log, logs/jitmap.txt\n");
 	}
 	ProbeLog("Telemetry: start=%d\n", telemetry_started ? 1 : 0);
 	PS4Telemetry::Stage("boot");

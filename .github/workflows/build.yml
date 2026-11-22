@@ -65,6 +65,8 @@ jobs:
           cp ps4/vm/build/{eboot.bin,vm_boot,vm_boot.oelf} ci-output/
           printf 'Commit: %s\nSDK SHA256: %s\n' "$GITHUB_SHA" "$PS4_SDK_SHA256" > ci-output/build-info.txt
           clang-21 --version >> ci-output/build-info.txt
+          # (AI-assisted) diag-time-sampler: function table for mapping logs/samples.log "elf" offsets.
+          (llvm-nm-21 -n -C --defined-only ci-output/vm_boot || nm -n -C --defined-only ci-output/vm_boot) > ci-output/vm_boot.syms || true
 
       - name: Upload executable and symbols
         uses: actions/upload-artifact@v7
@@ -74,6 +76,7 @@ jobs:
             ci-output/eboot.bin
             ci-output/vm_boot
             ci-output/vm_boot.oelf
+            ci-output/vm_boot.syms
             ci-output/build-info.txt
           if-no-files-found: error
           retention-days: 14
