@@ -32,10 +32,14 @@ template< uint page > void _hwWrite16(u32 mem, u8 value);
 template< uint page > void TAKES_R128 _hwWrite128(u32 mem, r128 value);
 
 
+// (AI-assisted) perf-test37: guest 32-bit register writes by area (logged by ps4/vm/main.cpp). EE thread only.
+u64 g_ps4_hw_writes[18];
+
 template<uint page>
 void _hwWrite32( u32 mem, u32 value )
 {
 	pxAssume( (mem & 0x03) == 0 );
+	++g_ps4_hw_writes[page != 3 ? (page & 15) : ((mem & 0xc00) == 0xc00 ? 16 : (mem & 0xc00) == 0x800 ? 17 : 3)];
 
 	// Notes:
 	// All unknown registers on the EE are "reserved" as discarded writes and indeterminate

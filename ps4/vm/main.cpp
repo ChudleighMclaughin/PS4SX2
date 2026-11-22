@@ -449,6 +449,19 @@ void VMHostPoll()
 			s_prev_busy = busy;
 			s_prev_span = span;
 		}
+		{
+			// (AI-assisted) perf-test37: guest 32-bit hardware register accesses by area (HwRead.cpp/HwWrite.cpp),
+			// cumulative. Index = page 0x00-0x0F of 0x10000000, 16 = VIF1 regs, 17 = VIF0 regs (page 3 is GIF regs).
+			extern u64 g_ps4_hw_reads[18], g_ps4_hw_writes[18];
+			char hw_line[700];
+			int len = std::snprintf(hw_line, sizeof(hw_line), "EE hw register accesses cumulative (reads/writes):");
+			static const char* const kAreas[18] = {"tim0", "tim1", "ipu", "gif", "fifo_vif0", "fifo_vif1", "fifo_gif", "fifo_ipu",
+				"dma_vif0", "dma_vif1", "dma_gif", "dma_ipu", "dma_sif", "dma_spr", "dmac", "intc_sbus", "vif1", "vif0"};
+			for (int i = 0; i < 18; i++)
+				len += std::snprintf(hw_line + len, sizeof(hw_line) - len, " %s=%llu/%llu", kAreas[i],
+					static_cast<unsigned long long>(g_ps4_hw_reads[i]), static_cast<unsigned long long>(g_ps4_hw_writes[i]));
+			ProbeLog("%s\n", hw_line);
+		}
 		ProbeLog("EE idle loops: loops=%llu skips=%llu callback_busy=%llu\n",
 			static_cast<unsigned long long>(g_ps4_idle_loop_blocks), static_cast<unsigned long long>(g_ps4_idle_loop_runs),
 			static_cast<unsigned long long>(g_ps4_idle_loop_declined));
@@ -1180,7 +1193,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test36\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test37\n");
 	// (AI-assisted) perf-test26: the first start of this build creates the recommended switch folders once
 	// (tested on GTA San Andreas, Shadow of the Colossus and God of War). vm-defaults-v1 records that it
 	// happened, so a folder deleted afterwards stays off.

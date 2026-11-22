@@ -21,10 +21,14 @@ static __fi void IntCHackCheck()
 
 template< uint page > RETURNS_R128 _hwRead128(u32 mem);
 
+// (AI-assisted) perf-test37: guest 32-bit register reads by area (logged by ps4/vm/main.cpp). EE thread only.
+u64 g_ps4_hw_reads[18];
+
 template< uint page, bool intcstathack >
 mem32_t _hwRead32(u32 mem)
 {
 	pxAssume( (mem & 0x03) == 0 );
+	++g_ps4_hw_reads[page != 3 ? (page & 15) : ((mem & 0xc00) == 0xc00 ? 16 : (mem & 0xc00) == 0x800 ? 17 : 3)];
 
 	switch( page )
 	{
