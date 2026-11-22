@@ -335,6 +335,28 @@ void* samplerThread(void*) {
         writeLine(fd, line);
     }
     writeModuleList(fd);
+    {
+        // (AI-assisted) perf-test44: name the libkernel calls behind "sys" samples (nearest ksym at or below).
+        static const char* const kNames[] = {"clock_gettime", "gettimeofday", "sched_yield", "scePthreadYield",
+            "pthread_yield", "nanosleep", "usleep", "sceKernelUsleep", "sceKernelGetProcessTime",
+            "sceKernelGetProcessTimeCounter", "sceKernelReadTsc", "_umtx_op", "pthread_mutex_lock",
+            "pthread_mutex_unlock", "pthread_mutex_trylock", "scePthreadMutexLock", "scePthreadMutexUnlock",
+            "pthread_cond_wait", "pthread_cond_timedwait", "pthread_cond_signal", "pthread_cond_broadcast",
+            "sem_wait", "sem_post", "sem_trywait", "sceKernelWaitSema", "sceKernelSignalSema",
+            "sceKernelWaitEventFlag", "sceKernelSetEventFlag", "sceKernelWaitEqueue", "sceKernelTriggerUserEvent",
+            "pthread_self", "pthread_getspecific", "__tls_get_addr", "pthread_getthreadid_np",
+            "sceKernelGetCurrentCpu", "getpid", "ioctl", "write", "read", "mmap", "mprotect", "madvise",
+            "sigprocmask", "_sigprocmask", "pthread_sigmask", "sigreturn", "thr_kill", "pthread_kill",
+            "__error", "sceKernelMprotect", "sceKernelGetCpumode"};
+        char line[160];
+        for (const char* name : kNames) {
+            if (void* address = ps4_kernel_symbol(name)) {
+                snprintf(line, sizeof(line), "ksym 0x%llx %s\n",
+                         static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(address)), name);
+                writeLine(fd, line);
+            }
+        }
+    }
     const double start = now();
     double window_start = start, last_dump = start;
     const timespec period = {0, 1000000}, paused = {0, 100000000};
