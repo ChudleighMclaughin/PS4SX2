@@ -25,6 +25,10 @@
 
 u64 g_ps4_dma_jobs, g_ps4_dma_giveups, g_ps4_dma_ee_waits; // EE thread
 double g_ps4_dma_ee_wait_ms, g_ps4_dma_busy_ms; // EE thread / worker thread
+// perf-test39: the EE's waits by reason (PS4DmaWorker::SyncReason, R5900.h).
+constexpr int kSyncReasons = 16;
+u64 g_ps4_dma_wait_n[kSyncReasons];
+double g_ps4_dma_wait_ms[kSyncReasons];
 
 namespace PS4DmaWorker
 {
@@ -43,6 +47,7 @@ namespace PS4DmaWorker
 		u32 s_pending = 0; // worker only, during a job
 		u32 s_return_mask = 0; // worker -> EE: events handed back
 		std::atomic<u32> s_dmac_irqs{0}, s_intc_irqs{0};
+		std::atomic<bool> s_ee_waiting{false}; // perf-test39: the EE is in SyncEE
 		Threading::UserspaceSemaphore s_kick;
 		std::atomic<bool> s_started{false};
 
@@ -98,10 +103,14 @@ namespace PS4DmaWorker
 					break;
 				// No progress: waiting on VU1, the GS or something only the EE can do. Keep trying for a while
 				// (VU1/GS waits end by themselves), then hand the rest back.
+				// perf-test39: if the EE is already waiting for this job, a stalled job goes back at once. In GTA San
+				// Andreas VIF1 waited on a GIF transfer the EE was about to start, while the EE waited on the job:
+				// ~20 give-ups a second, each after the full 2 ms, ~20% of the EE waiting (PKG-44).
 				const Common::Timer::Value now = Common::Timer::GetCurrentValue();
 				if (!stall_start)
 					stall_start = now;
-				else if (Common::Timer::ConvertValueToNanoseconds(now - stall_start) > kGiveUpNs)
+				else if (s_ee_waiting.load(std::memory_order_relaxed) ||
+						 Common::Timer::ConvertValueToNanoseconds(now - stall_start) > kGiveUpNs)
 				{
 					s_return_mask |= s_pending;
 					s_pending = 0;
@@ -186,11 +195,12 @@ namespace PS4DmaWorker
 		s_kick.Post();
 	}
 
-	void SyncEE()
+	void SyncEE(int reason)
 	{
 		if (g_state.load(std::memory_order_acquire) == 1)
 		{
 			const Common::Timer::Value t0 = Common::Timer::GetCurrentValue();
+			s_ee_waiting.store(true, std::memory_order_relaxed);
 			for (u32 spin = 0; g_state.load(std::memory_order_acquire) == 1; spin++)
 			{
 				if (spin < 4096)
@@ -198,8 +208,13 @@ namespace PS4DmaWorker
 				else
 					std::this_thread::yield();
 			}
+			s_ee_waiting.store(false, std::memory_order_relaxed);
+			const double ms = Common::Timer::ConvertValueToNanoseconds(Common::Timer::GetCurrentValue() - t0) / 1e6;
 			++g_ps4_dma_ee_waits;
-			g_ps4_dma_ee_wait_ms += Common::Timer::ConvertValueToNanoseconds(Common::Timer::GetCurrentValue() - t0) / 1e6;
+			g_ps4_dma_ee_wait_ms += ms;
+			const int r = (reason >= 0 && reason < kSyncReasons) ? reason : 0;
+			++g_ps4_dma_wait_n[r];
+			g_ps4_dma_wait_ms[r] += ms;
 		}
 		if (g_state.load(std::memory_order_acquire) == 2)
 			ApplyFinished();

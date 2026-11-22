@@ -411,16 +411,18 @@ namespace PS4DmaWorker
 	void DeferDmacIrq(int n);
 	void DeferIntcIrq(int n);
 	void EEService(); // EE event test: apply a finished job, hand over new VIF1/GIF work
-	void SyncEE(); // EE: wait for a running job and apply it
+	// Why the EE waited (perf-test39, logged per reason): 1 GIF/VIF regs, 2 VIF1/GIF FIFO, 3 VIF1 DMA regs, 4 GIF DMA
+	// regs, 5 DMAC/D_ENABLEW writes, 6 GS CSR, 7 GS ring write, 8 WaitGS, 9 MTVU ring write, 10 WaitVU, 11 reset.
+	void SyncEE(int reason); // EE: wait for a running job and apply it
 	void Start();
 } // namespace PS4DmaWorker
 
 // EE thread only (a no-op on the worker, VU1, GS and host threads, so none of them can wait on a worker that may be
 // waiting on them): wait for a DMA worker job before touching its state.
-static __fi void PS4DmaWorkerSync()
+static __fi void PS4DmaWorkerSync(int reason = 0)
 {
 	if (PS4DmaWorker::g_state.load(std::memory_order_acquire) != 0 && PS4DmaWorker::OnEE())
-		PS4DmaWorker::SyncEE();
+		PS4DmaWorker::SyncEE(reason);
 }
 
 // perf-test38: the EE's hardware register handlers (HwRead.cpp/HwWrite.cpp) wait for a DMA worker job before any access
@@ -429,17 +431,23 @@ static __fi void PS4DmaWorkerSync()
 template <unsigned page>
 static __fi void PS4DmaWorkerSyncHw(u32 mem, bool write)
 {
-	if constexpr (page == 0x03 || page == 0x05 || page == 0x06 || page == 0x09 || page == 0x0A)
-		PS4DmaWorkerSync();
+	if constexpr (page == 0x03)
+		PS4DmaWorkerSync(1);
+	else if constexpr (page == 0x05 || page == 0x06)
+		PS4DmaWorkerSync(2);
+	else if constexpr (page == 0x09)
+		PS4DmaWorkerSync(3);
+	else if constexpr (page == 0x0A)
+		PS4DmaWorkerSync(4);
 	else if constexpr (page == 0x0E)
 	{
 		if (write && (mem & 0xffff) != 0xe010)
-			PS4DmaWorkerSync();
+			PS4DmaWorkerSync(5);
 	}
 	else if constexpr (page == 0x0F)
 	{
 		if (write && (mem & 0xffff) == 0xf590)
-			PS4DmaWorkerSync();
+			PS4DmaWorkerSync(5);
 	}
 }
 extern uint intcInterrupt();

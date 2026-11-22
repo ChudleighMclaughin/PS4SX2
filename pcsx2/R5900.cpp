@@ -73,7 +73,7 @@ uptr g_argPtrs[kMaxArgs];
 
 void cpuReset()
 {
-	PS4DmaWorkerSync(); // perf-test38: no DMA worker job across a reset
+	PS4DmaWorkerSync(11); // perf-test38: no DMA worker job across a reset
 	std::memset(&cpuRegs, 0, sizeof(cpuRegs));
 	std::memset(&fpuRegs, 0, sizeof(fpuRegs));
 	std::memset(&tlb, 0, sizeof(tlb));

@@ -465,9 +465,23 @@ void VMHostPoll()
 			extern u64 g_ps4_dma_jobs, g_ps4_dma_giveups, g_ps4_dma_ee_waits;
 			extern double g_ps4_dma_ee_wait_ms, g_ps4_dma_busy_ms;
 			if (PS4DmaWorker::g_enabled)
+			{
 				ProbeLog("DMA worker cumulative: jobs=%llu giveups=%llu ee_waits=%llu ee_wait_ms=%.1f worker_busy_ms=%.1f\n",
 					static_cast<unsigned long long>(g_ps4_dma_jobs), static_cast<unsigned long long>(g_ps4_dma_giveups),
 					static_cast<unsigned long long>(g_ps4_dma_ee_waits), g_ps4_dma_ee_wait_ms, g_ps4_dma_busy_ms);
+				// perf-test39: the EE's waits by reason (R5900.h PS4DmaWorker::SyncEE), count/ms, cumulative.
+				extern u64 g_ps4_dma_wait_n[16];
+				extern double g_ps4_dma_wait_ms[16];
+				static const char* const kReasons[12] = {"other", "gif_vif_regs", "fifo", "vif1_dma", "gif_dma", "dmac",
+					"gs_csr", "gs_ring", "wait_gs", "mtvu_ring", "wait_vu", "reset"};
+				char wait_line[600];
+				int wlen = std::snprintf(wait_line, sizeof(wait_line), "DMA worker waits by reason:");
+				for (int i = 0; i < 12; i++)
+					if (g_ps4_dma_wait_n[i])
+						wlen += std::snprintf(wait_line + wlen, sizeof(wait_line) - wlen, " %s=%llu/%.0fms", kReasons[i],
+							static_cast<unsigned long long>(g_ps4_dma_wait_n[i]), g_ps4_dma_wait_ms[i]);
+				ProbeLog("%s\n", wait_line);
+			}
 		}
 		ProbeLog("EE idle loops: loops=%llu skips=%llu callback_busy=%llu\n",
 			static_cast<unsigned long long>(g_ps4_idle_loop_blocks), static_cast<unsigned long long>(g_ps4_idle_loop_runs),
@@ -1205,7 +1219,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test38\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test39\n");
 	// (AI-assisted) perf-test26: the first start of this build creates the recommended switch folders once
 	// (tested on GTA San Andreas, Shadow of the Colossus and God of War). vm-defaults-v1 records that it
 	// happened, so a folder deleted afterwards stays off.

@@ -30,7 +30,7 @@ void gsReset()
 
 static __fi void gsCSRwrite( const tGS_CSR& csr )
 {
-	PS4DmaWorkerSync(); // perf-test38: a CSR write (reset, SIGNAL/FINISH) touches the GIF unit a DMA worker job may use
+	PS4DmaWorkerSync(6); // perf-test38: a CSR write (reset, SIGNAL/FINISH) touches the GIF unit a DMA worker job may use
 	if (csr.RESET) {
 		GUNIT_WARN("GUNIT_WARN: csr.RESET");
 		//Console.Warning( "csr.RESET" );
@@ -198,7 +198,7 @@ void gsWrite64_page_00( u32 mem, u64 value )
 
 void gsWrite64_page_01( u32 mem, u64 value )
 {
-	PS4DmaWorkerSync(); // perf-test38
+	PS4DmaWorkerSync(6); // perf-test38
 	GIF_LOG("GS Write64 at %8.8lx with data %8.8x_%8.8x", mem, (u32)(value >> 32), (u32)value);
 
 	switch( mem )
@@ -240,7 +240,7 @@ void TAKES_R128 gsWrite128_page_00( u32 mem, r128 value )
 
 void TAKES_R128 gsWrite128_page_01( u32 mem, r128 value )
 {
-	PS4DmaWorkerSync(); // perf-test38
+	PS4DmaWorkerSync(6); // perf-test38
 	switch( mem )
 	{
 		case GS_CSR:

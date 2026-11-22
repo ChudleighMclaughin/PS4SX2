@@ -568,7 +568,7 @@ void VU_Thread::OrbisBadCommand(u32 tag)
 // to write a continuous 'size * sizeof(u32)' bytes
 void VU_Thread::ReserveSpace(s32 size)
 {
-	PS4DmaWorkerSync(); // perf-test38: one MTVU ring producer at a time (the EE waits for a DMA worker job)
+	PS4DmaWorkerSync(9); // perf-test38: one MTVU ring producer at a time (the EE waits for a DMA worker job)
 	pxAssert(m_write_pos < buffer_size);
 	pxAssert(size < buffer_size);
 	pxAssert(size > 0);
@@ -835,7 +835,7 @@ bool VU_Thread::IsDone()
 void VU_Thread::WaitVU()
 {
 	MTVU_LOG("MTVU - WaitVU!");
-	PS4DmaWorkerSync(); // perf-test38: the worker may still be adding to the ring
+	PS4DmaWorkerSync(10); // perf-test38: the worker may still be adding to the ring
 	FlushKick(); // vk-285-84: WaitForEmpty takes a spinning or sleeping thread as done
 	const unsigned long long t0 = __builtin_ia32_rdtsc(); // eerec-281
 	OrbisEEWaitScope orbis_wait; // vk-285-8
