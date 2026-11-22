@@ -50,6 +50,7 @@ namespace PS4DmaWorker
 		u32 s_return_mask = 0; // worker -> EE: events handed back
 		std::atomic<u32> s_dmac_irqs{0}, s_intc_irqs{0};
 		std::atomic<bool> s_ee_waiting{false}; // perf-test39: the EE is in SyncEE
+		std::atomic<bool> s_ee_preempt{false}; // perf-test43: ...for a D_CTRL/D_ENABLEW write or the GS ring
 		Threading::UserspaceSemaphore s_kick;
 		std::atomic<bool> s_started{false};
 
@@ -83,8 +84,9 @@ namespace PS4DmaWorker
 			{
 				// (AI-assisted) perf-test42 (vm-dma-worker-preempt): the EE is waiting, so hand the rest back at this
 				// handler boundary (same path as a give-up) instead of making it wait out the whole job (~7 ms per wait in
-				// GTA San Andreas, PKG-47).
-				if (g_preempt && s_ee_waiting.load(std::memory_order_relaxed))
+				// GTA San Andreas, PKG-47). perf-test43: only for waits that aren't the game polling this DMA (s_ee_preempt);
+				// on those, each poll handed the job back and re-offloaded it (Shadow of the Colossus at 2%, PKG-48).
+				if (g_preempt && s_ee_preempt.load(std::memory_order_relaxed))
 				{
 					s_return_mask |= s_pending;
 					s_pending = 0;
@@ -224,6 +226,7 @@ namespace PS4DmaWorker
 		if (g_state.load(std::memory_order_acquire) == 1)
 		{
 			const Common::Timer::Value t0 = Common::Timer::GetCurrentValue();
+			s_ee_preempt.store(reason == 5 || reason == 7 || reason == 12, std::memory_order_relaxed);
 			s_ee_waiting.store(true, std::memory_order_relaxed);
 			for (u32 spin = 0; g_state.load(std::memory_order_acquire) == 1; spin++)
 			{
@@ -233,6 +236,7 @@ namespace PS4DmaWorker
 					std::this_thread::yield();
 			}
 			s_ee_waiting.store(false, std::memory_order_relaxed);
+			s_ee_preempt.store(false, std::memory_order_relaxed);
 			const double ms = Common::Timer::ConvertValueToNanoseconds(Common::Timer::GetCurrentValue() - t0) / 1e6;
 			++g_ps4_dma_ee_waits;
 			g_ps4_dma_ee_wait_ms += ms;
