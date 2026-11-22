@@ -183,6 +183,7 @@ set(vm_sources
   pcsx2/Vif.cpp
   pcsx2/Vif0_Dma.cpp
   pcsx2/Vif1_Dma.cpp
+  pcsx2/PS4DmaWorker.cpp
   pcsx2/VMManager.cpp
   pcsx2/vtlb.cpp
   pcsx2/VU0micro.cpp

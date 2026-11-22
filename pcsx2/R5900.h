@@ -6,6 +6,7 @@
 #include "common/Pcsx2Defs.h"
 
 #include <array>
+#include <atomic> // perf-test38: PS4DmaWorker::g_state
 
 // --------------------------------------------------------------------------------------
 //  EE Bios function name tables.
@@ -393,6 +394,54 @@ enum EE_EventType
 
 extern void CPU_INT( EE_EventType n, s32 ecycle );
 extern void CPU_SET_DMASTALL(EE_EventType n, bool set);
+
+// (AI-assisted) perf-test38: opt-in DMA worker (vm-dma-worker, pcsx2/PS4DmaWorker.cpp). With Instant DMA, the EE hands
+// pending VIF1/GIF DMA (and the MTVU busy/VU1 finish events) to a thread on another core at an event test and goes on
+// running the game; the PS2's own DMA ran beside the EE the same way. On the worker, CPU_INT goes to the worker's own
+// pending set and DMAC/INTC interrupts are kept for the EE to raise when the job is done. The EE waits for the worker
+// before it touches the VIF1/GIF/DMA registers or writes the GS or MTVU rings. Needs proper testing.
+namespace PS4DmaWorker
+{
+	extern bool g_enabled;
+	extern std::atomic<int> g_state; // 0 idle, 1 job running, 2 job done (not yet applied on the EE)
+	bool OnWorker();
+	bool OnEE(); // the EE thread (recorded at its first event test); only it ever waits for the worker
+	void Schedule(int n);
+	bool WorkerScheduled(u32 mask);
+	void DeferDmacIrq(int n);
+	void DeferIntcIrq(int n);
+	void EEService(); // EE event test: apply a finished job, hand over new VIF1/GIF work
+	void SyncEE(); // EE: wait for a running job and apply it
+	void Start();
+} // namespace PS4DmaWorker
+
+// EE thread only (a no-op on the worker, VU1, GS and host threads, so none of them can wait on a worker that may be
+// waiting on them): wait for a DMA worker job before touching its state.
+static __fi void PS4DmaWorkerSync()
+{
+	if (PS4DmaWorker::g_state.load(std::memory_order_acquire) != 0 && PS4DmaWorker::OnEE())
+		PS4DmaWorker::SyncEE();
+}
+
+// perf-test38: the EE's hardware register handlers (HwRead.cpp/HwWrite.cpp) wait for a DMA worker job before any access
+// to the GIF/VIF registers (page 3), the VIF1 and GIF FIFOs (5, 6), the VIF1 and GIF DMA channels (9, 10), and before
+// writes to the DMAC control registers other than D_STAT (page 14) and to D_ENABLEW (0x1000F590).
+template <unsigned page>
+static __fi void PS4DmaWorkerSyncHw(u32 mem, bool write)
+{
+	if constexpr (page == 0x03 || page == 0x05 || page == 0x06 || page == 0x09 || page == 0x0A)
+		PS4DmaWorkerSync();
+	else if constexpr (page == 0x0E)
+	{
+		if (write && (mem & 0xffff) != 0xe010)
+			PS4DmaWorkerSync();
+	}
+	else if constexpr (page == 0x0F)
+	{
+		if (write && (mem & 0xffff) == 0xf590)
+			PS4DmaWorkerSync();
+	}
+}
 extern uint intcInterrupt();
 extern uint dmacInterrupt();
 

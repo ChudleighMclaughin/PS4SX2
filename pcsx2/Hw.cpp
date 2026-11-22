@@ -103,6 +103,11 @@ __fi uint dmacInterrupt()
 
 void hwIntcIrq(int n)
 {
+	if (PS4DmaWorker::g_state.load(std::memory_order_relaxed) == 1 && PS4DmaWorker::OnWorker()) [[unlikely]]
+	{
+		PS4DmaWorker::DeferIntcIrq(n); // perf-test38: raised on the EE when the job is done
+		return;
+	}
 	ORBIS_EEDIAG(OrbisEEDiag::intc_irq[n & 15]++); // PS5 port (vk-285-100)
 	psHu32(INTC_STAT) |= 1<<n;
 	if(psHu32(INTC_MASK) & (1<<n))cpuTestINTCInts();
@@ -110,6 +115,11 @@ void hwIntcIrq(int n)
 
 void hwDmacIrq(int n)
 {
+	if (PS4DmaWorker::g_state.load(std::memory_order_relaxed) == 1 && PS4DmaWorker::OnWorker()) [[unlikely]]
+	{
+		PS4DmaWorker::DeferDmacIrq(n); // perf-test38: raised on the EE when the job is done
+		return;
+	}
 	ORBIS_EEDIAG(OrbisEEDiag::dmac_irq[n & 15]++); // PS5 port (vk-285-100)
 	psHu32(DMAC_STAT) |= 1<<n;
 	if(psHu16(DMAC_STAT+2) & (1<<n))cpuTestDMACInts();

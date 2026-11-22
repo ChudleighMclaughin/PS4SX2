@@ -73,6 +73,7 @@ uptr g_argPtrs[kMaxArgs];
 
 void cpuReset()
 {
+	PS4DmaWorkerSync(); // perf-test38: no DMA worker job across a reset
 	std::memset(&cpuRegs, 0, sizeof(cpuRegs));
 	std::memset(&fpuRegs, 0, sizeof(fpuRegs));
 	std::memset(&tlb, 0, sizeof(tlb));
@@ -532,6 +533,10 @@ __fi void _cpuEventTest_Shared()
 	// These are basically just DMAC-related events, which also piggy-back the same bits as
 	// the PS2's own DMA channel IRQs and IRQ Masks.
 
+	// perf-test38: raise a finished DMA worker job's interrupts, and hand it pending VIF1/GIF work.
+	if (PS4DmaWorker::g_enabled)
+		PS4DmaWorker::EEService();
+
 	if (cpuRegs.interrupt)
 	{
 		// This is a BIOS hack because the coding in the BIOS is terrible but the bug is masked by Data Cache
@@ -662,6 +667,9 @@ __fi void cpuTestHwInts()
 
 __fi void CPU_SET_DMASTALL(EE_EventType n, bool set)
 {
+	// perf-test38: the worker's stalls are its own (it retries until the job makes progress); the EE's are untouched.
+	if (PS4DmaWorker::g_state.load(std::memory_order_relaxed) == 1 && PS4DmaWorker::OnWorker()) [[unlikely]]
+		return;
 	// vk-285-99: whole-word stores (see OrbisDmaStallStore).
 	if (set)
 		OrbisDmaStallStore(cpuRegs.dmastall | (1u << n));
@@ -671,6 +679,12 @@ __fi void CPU_SET_DMASTALL(EE_EventType n, bool set)
 
 __fi void CPU_INT( EE_EventType n, s32 ecycle)
 {
+	// perf-test38: on the DMA worker, events go to the worker's own pending set (PS4DmaWorker.cpp).
+	if (PS4DmaWorker::g_state.load(std::memory_order_relaxed) == 1 && PS4DmaWorker::OnWorker()) [[unlikely]]
+	{
+		PS4DmaWorker::Schedule(n);
+		return;
+	}
 	ORBIS_EEDIAG(OrbisEEDiag::cpu_int[n & 31]++); // vk-285-100
 	// If it's retunning too quick, just rerun the DMA, there's no point in running the EE for < 4 cycles.
 	// This causes a huge uplift in performance for ONI FMV's.

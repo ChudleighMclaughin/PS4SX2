@@ -846,6 +846,7 @@ void MTGS::WaitGS(bool syncRegs, bool weakWait, bool isMTVU)
 	pxAssertMsg(IsOpen(), "MTGS Warning!  WaitGS issued on a closed thread.");
 	if (!IsOpen()) [[unlikely]]
 		return;
+	PS4DmaWorkerSync(); // perf-test38: the worker may still be adding to the ring
 
 #if defined(PCSX2_GS_MTGS_PROBE)
 	pxAssertRel(!syncRegs && !weakWait && !isMTVU, "Probe waits must not synchronize absent EE/VU state");
@@ -996,6 +997,7 @@ void MTGS::SendDataPacket()
 
 void MTGS::GenericStall(uint size)
 {
+	PS4DmaWorkerSync(); // perf-test38: one GS ring producer at a time (the EE waits for a DMA worker job)
 	// Note on volatiles: m_WritePos is not modified by the GS thread, so there's no need
 	// to use volatile reads here.  We do cache it though, since we know it never changes,
 	// except for calls to RingbufferRestert() -- handled below.

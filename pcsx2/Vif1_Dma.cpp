@@ -307,7 +307,10 @@ __fi void vif1VUFinish()
 	{
 		vif1.waitforvu = false;
 		//Check if VIF is already scheduled to interrupt, if it's waiting, kick it :P
-		if ((cpuRegs.interrupt & ((1 << DMAC_VIF1) | (1 << DMAC_MFIFO_VIF))) == 0 && vif1ch.chcr.STR && !vif1Regs.stat.test(VIF1_STAT_VSS | VIF1_STAT_VIS | VIF1_STAT_VFS))
+		// perf-test38: on the DMA worker, "already scheduled" means the worker's own pending set.
+		if ((cpuRegs.interrupt & ((1 << DMAC_VIF1) | (1 << DMAC_MFIFO_VIF))) == 0 &&
+			!(PS4DmaWorker::OnWorker() && PS4DmaWorker::WorkerScheduled((1u << DMAC_VIF1) | (1u << DMAC_MFIFO_VIF))) &&
+			vif1ch.chcr.STR && !vif1Regs.stat.test(VIF1_STAT_VSS | VIF1_STAT_VIS | VIF1_STAT_VFS))
 		{
 			if (dmacRegs.ctrl.MFD == MFD_VIF1)
 				vifMFIFOInterrupt();

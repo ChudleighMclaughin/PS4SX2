@@ -40,6 +40,7 @@ void _hwWrite32( u32 mem, u32 value )
 {
 	pxAssume( (mem & 0x03) == 0 );
 	++g_ps4_hw_writes[page != 3 ? (page & 15) : ((mem & 0xc00) == 0xc00 ? 16 : (mem & 0xc00) == 0x800 ? 17 : 3)];
+	PS4DmaWorkerSyncHw<page>(mem, true); // perf-test38
 
 	// Notes:
 	// All unknown registers on the EE are "reserved" as discarded writes and indeterminate
@@ -382,6 +383,7 @@ template<uint page>
 void _hwWrite64( u32 mem, u64 value )
 {
 	pxAssume( (mem & 0x07) == 0 );
+	PS4DmaWorkerSyncHw<page>(mem, true); // perf-test38
 
 	// * Only the IPU has true 64 bit registers.
 	// * FIFOs have 128 bit registers that are probably zero-fill.
@@ -428,6 +430,7 @@ template< uint page >
 void TAKES_R128 _hwWrite128(u32 mem, r128 srcval)
 {
 	pxAssume( (mem & 0x0f) == 0 );
+	PS4DmaWorkerSyncHw<page>(mem, true); // perf-test38
 
 	// FIFOs are the only "legal" 128 bit registers.  Handle them first.
 	// all other registers fall back on the 64-bit handler (and from there

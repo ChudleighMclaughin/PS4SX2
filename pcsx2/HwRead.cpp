@@ -29,6 +29,7 @@ mem32_t _hwRead32(u32 mem)
 {
 	pxAssume( (mem & 0x03) == 0 );
 	++g_ps4_hw_reads[page != 3 ? (page & 15) : ((mem & 0xc00) == 0xc00 ? 16 : (mem & 0xc00) == 0x800 ? 17 : 3)];
+	PS4DmaWorkerSyncHw<page>(mem, false); // perf-test38
 
 	switch( page )
 	{
@@ -285,6 +286,7 @@ template< uint page >
 static u64 _hwRead64(u32 mem)
 {
 	pxAssume( (mem & 0x07) == 0 );
+	PS4DmaWorkerSyncHw<page>(mem, false); // perf-test38
 
 	switch (page)
 	{
@@ -339,6 +341,7 @@ template< uint page >
 RETURNS_R128 _hwRead128(u32 mem)
 {
 	pxAssume( (mem & 0x0f) == 0 );
+	PS4DmaWorkerSyncHw<page>(mem, false); // perf-test38
 
 	alignas(16) mem128_t result;
 
