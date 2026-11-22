@@ -44,6 +44,7 @@
 extern "C" void ac_ps4_get_gpu_busy(uint64_t* busy_ticks, uint64_t* span_ticks) __attribute__((weak));
 extern "C" void ps4_sampler_start(); // ps4/runtime/ps4_sampler.cpp (diag-time-sampler)
 extern "C" void ps4_jitmap_enable();
+extern bool newVifDynaRec; // pcsx2/Vif_Unpack.cpp (perf-test30)
 #include "HostPollGate.h"
 #include "GameMenu.h"
 #include "SessionLogs.h"
@@ -1168,7 +1169,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test29\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test30\n");
 	// (AI-assisted) perf-test26: the first start of this build creates the recommended switch folders once
 	// (tested on GTA San Andreas, Shadow of the Colossus and God of War). vm-defaults-v1 records that it
 	// happened, so a folder deleted afterwards stays off.
@@ -1189,6 +1190,10 @@ int main()
 	// (AI-assisted) diag-time-sampler: opt-in time profile. A helper thread interrupts the EE, VU1, GS and
 	// GS replay threads every millisecond and logs where they were (logs/samples.log, every 10 s), and
 	// every JIT block is listed in logs/jitmap.txt so its samples can be tied to guest code.
+	// (AI-assisted) perf-test30: opt-in VIF unpack recompiler (off since the Orbis bring-up). The time
+	// profile showed the C++ unpack loop at ~14% of God of War's VU1 thread. Set before the CPU providers.
+	newVifDynaRec = access("/data/PS4SX2/vm-vif-dynarec", F_OK) == 0;
+	ProbeLog("VIF unpack recompiler: %s\n", newVifDynaRec ? "on (/data/PS4SX2/vm-vif-dynarec)" : "off (opt in with /data/PS4SX2/vm-vif-dynarec)");
 	if (access("/data/PS4SX2/vm-time-profile", F_OK) == 0)
 	{
 		ps4_jitmap_enable();

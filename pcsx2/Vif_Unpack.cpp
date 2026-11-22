@@ -294,6 +294,7 @@ template void vifUnpackSetup<0>(const u32* data);
 template void vifUnpackSetup<1>(const u32* data);
 
 alignas(16) nVifStruct nVif[2];
+bool newVifDynaRec = false; // (AI-assisted) perf-test30: see Vif_Dynarec.h
 
 // Interpreter-style SSE unpacks.  Array layout matches the interpreter C unpacks.
 //  ([USN][Masking][Unpack Type]) [curCycle]

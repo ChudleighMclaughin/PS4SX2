@@ -2866,7 +2866,7 @@ void VMManager::Internal::ClearCPUExecutionCaches()
 	printf("[dbg] clear: CpuVU1 done\n");
 	fflush(stdout);
 
-	if constexpr (newVifDynaRec)
+	if (newVifDynaRec)
 	{
 		dVifReset(0);
 		dVifReset(1);
