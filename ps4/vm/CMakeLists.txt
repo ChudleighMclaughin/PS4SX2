@@ -320,7 +320,7 @@ target_include_directories(vm_boot PRIVATE
   ${PCSX2_ROOT}/3rdparty/rcheevos/include ${PCSX2_ROOT}/3rdparty/soundtouch/soundtouch
   ${PCSX2_ROOT}/3rdparty/freesurround/include ${PCSX2_ROOT}/ps4/deps/prefix/include
   ${shaderc_headers_SOURCE_DIR}/libshaderc/include ${glslang_SOURCE_DIR})
-target_compile_definitions(vm_boot PRIVATE PCSX2_PS4=1 PCSX2_PS4_VM_BOOT=1 PS4=1 USE_GLES2=1 BOREALIS_USE_OPENGL=1 $<$<BOOL:${PCSX2_VM_JIT}>:PCSX2_PS4_VM_BOOT_JIT=1> $<$<BOOL:${PCSX2_VM_FASTMEM}>:PCSX2_PS4_VM_BOOT_FASTMEM=1> $<$<BOOL:${PCSX2_VM_MTVU}>:PCSX2_PS4_VM_BOOT_MTVU=1> ENABLE_VULKAN=1 __POSIX__=1 _M_X86=1
+target_compile_definitions(vm_boot PRIVATE PCSX2_PS4_VM_EE_BLOCK_PROFILE=1 PCSX2_PS4=1 PCSX2_PS4_VM_BOOT=1 PS4=1 USE_GLES2=1 BOREALIS_USE_OPENGL=1 $<$<BOOL:${PCSX2_VM_JIT}>:PCSX2_PS4_VM_BOOT_JIT=1> $<$<BOOL:${PCSX2_VM_FASTMEM}>:PCSX2_PS4_VM_BOOT_FASTMEM=1> $<$<BOOL:${PCSX2_VM_MTVU}>:PCSX2_PS4_VM_BOOT_MTVU=1> ENABLE_VULKAN=1 __POSIX__=1 _M_X86=1
   OVERRIDE_HOST_PAGE_SIZE=0x4000 OVERRIDE_HOST_CACHE_LINE_SIZE=64)
 target_compile_options(vm_boot PRIVATE -march=btver2 -msse4.1 -mno-avx2 -mno-bmi2 -ffunction-sections -fdata-sections -fvisibility=hidden
   "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include compare>" "SHELL:-include strings.h")
