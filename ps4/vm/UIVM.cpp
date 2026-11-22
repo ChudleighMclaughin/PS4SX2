@@ -40,7 +40,7 @@ namespace
 	struct PS4SystemStats
 	{
 		double ram_mb = -1.0; // direct memory allocated + flexible memory in use
-		double cpu_pct = -1.0; // process CPU time over the 6 game cores
+		double cpu_pct = -1.0; // average busy share of the EE, GS and VU1 threads
 		int temp_c = -1;
 	};
 
@@ -83,19 +83,27 @@ namespace
 		}
 		s_stats.ram_mb = ram;
 
-		timespec cpu{};
-		if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu) == 0)
-		{
-			if (s_last_wall.tv_sec != 0 && since > 0.0)
-			{
-				const double used = (cpu.tv_sec - s_last_cpu.tv_sec) + (cpu.tv_nsec - s_last_cpu.tv_nsec) / 1e9;
-				s_stats.cpu_pct = std::clamp(100.0 * used / (since * 6.0), 0.0, 100.0);
-			}
-			s_last_cpu = cpu;
-		}
+		// perf-test34: the process CPU clock didn't change on the PS4 (user report on PKG-39); use the emulator's
+		// own per-thread measurements (CLOCK_THREAD_CPUTIME_ID on each thread): the average busy share of the
+		// EE, GS and VU1 cores.
+		(void)s_last_cpu;
+		const double ee = PerformanceMetrics::GetCPUThreadUsage();
+		const double gs = PerformanceMetrics::GetGSThreadUsage();
+		const double vu = PerformanceMetrics::GetVUThreadUsage();
+		s_stats.cpu_pct = (ee + gs + vu > 0.0) ? std::clamp((ee + gs + vu) / 3.0, 0.0, 100.0) : -1.0;
 
-		int temp = 0;
-		s_stats.temp_c = (sceKernelGetCpuTemperature && sceKernelGetCpuTemperature(&temp) == 0) ? temp : -1;
+		// Temperature: log the raw readings of both sensors every ~20 s so a stuck value can be told apart.
+		using SensorFn = int (*)(int, int*);
+		static const auto sceKernelGetSocSensorTemperature = reinterpret_cast<SensorFn>(ps4_kernel_symbol("sceKernelGetSocSensorTemperature"));
+		int temp = 0, soc = 0;
+		const int temp_ret = sceKernelGetCpuTemperature ? sceKernelGetCpuTemperature(&temp) : -1;
+		const int soc_ret = sceKernelGetSocSensorTemperature ? sceKernelGetSocSensorTemperature(0, &soc) : -1;
+		s_stats.temp_c = temp_ret == 0 ? temp : (soc_ret == 0 ? soc : -1);
+		static int s_log_count = 0;
+		if ((s_log_count++ % 10) == 0)
+			ProbeLog("Stats bar: ram_mb=%.0f cpu_pct=%.0f (ee=%.0f gs=%.0f vu1=%.0f) cpu_temp=%d (ret %d, fn %d) soc_temp=%d (ret %d, fn %d)\n",
+				s_stats.ram_mb, s_stats.cpu_pct, ee, gs, vu, temp, temp_ret, sceKernelGetCpuTemperature != nullptr,
+				soc, soc_ret, sceKernelGetSocSensorTemperature != nullptr);
 		s_last_wall = wall;
 		return s_stats;
 	}
