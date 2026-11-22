@@ -728,6 +728,12 @@ static void* RunVM(void*)
 	settings->SetBoolValue("EmuCore/Speedhacks", "vuFlagHack", true);
 	settings->SetBoolValue("EmuCore/Speedhacks", "IntcStat", true);
 	settings->SetBoolValue("EmuCore/Speedhacks", "WaitLoop", true);
+	// (AI-assisted) perf-test32: opt-in VU1 clamp mode "None" (vm-vu1-noclamp). microVU then skips the
+	// overflow min/max it adds to VU1 math; the VU1 thread limits God of War. Games that rely on PS2 overflow
+	// behaviour can show spiky or missing geometry with it. GameDB clamp modes still apply on top.
+	const bool vu1_noclamp = access("/data/PS4SX2/vm-vu1-noclamp", F_OK) == 0;
+	settings->SetBoolValue("EmuCore/CPU/Recompiler", "vu1Overflow", !vu1_noclamp);
+	ProbeLog("VU1 clamping: %s\n", vu1_noclamp ? "none (vm-vu1-noclamp)" : "normal");
 	const bool fast_cdvd = access("/data/PS4SX2/vm-fast-cdvd", F_OK) == 0 &&
 	                       access("/data/PS4SX2/vm-no-fast-cdvd", F_OK) != 0;
 	settings->SetBoolValue("EmuCore/Speedhacks", "fastCDVD", fast_cdvd);
@@ -1169,7 +1175,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test31\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test32\n");
 	// (AI-assisted) perf-test26: the first start of this build creates the recommended switch folders once
 	// (tested on GTA San Andreas, Shadow of the Colossus and God of War). vm-defaults-v1 records that it
 	// happened, so a folder deleted afterwards stays off.
