@@ -192,3 +192,5 @@ Kept in the claude.ai Project "PS4 Emulator Project" (not in this repo):
 - `claude/PS4SX2 – test builds and results.md` (build table, results, SotC profiles; updated through perf-test7)
 - `claude/PS4SX2 (Phoenixx1202) – repo scan and bug report.md` (findings 1–9 above, first measurements)
 - `claude/PS4 Slim 12.52 kernel dump – performance findings.md` (power modes; the dump contains account IDs, never attach it publicly)
+
+See also `KERNEL-DUMP-HANDOFF.md` in this repo: what the 12.52 kernel dump showed and how it shaped these decisions.
