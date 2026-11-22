@@ -90,7 +90,7 @@ extern unsigned long long g_orbis_vu_idle_ticks, g_orbis_ee_waitvu_ticks, g_orbi
 extern u64 g_ps4_idle_loop_blocks, g_ps4_idle_loop_runs, g_ps4_idle_loop_declined;
 extern std::atomic<u32> g_orbis_rec_faults;
 extern std::atomic<u32> g_ps4_mprotect_failures;
-extern bool g_ps4_bytecopy_fusion;
+extern bool g_ps4_bytecopy_fusion, g_ps4_bytecopy_pageprot;
 extern std::atomic<int> g_orbis_waitloop_ext;
 extern u64 g_ps4_vtlb_cached_quad_reads, g_ps4_vtlb_cached_writes;
 extern u64 g_ps4_multiblock_wait_blocks, g_ps4_multiblock_wait_runs, g_ps4_multiblock_wait_iterations;
@@ -933,7 +933,10 @@ static void* RunVM(void*)
 	ProbeLog("VIF1 pass batching: %s\n", g_ps4_vif1_batch ? "enabled by /data/PS4SX2/vm-vif1-batch (up to 4096 cycles per batch)" :
 															"off (opt in with /data/PS4SX2/vm-vif1-batch)");
 	// (AI-assisted) Exact SMC mode must inspect code on every loop iteration.
-	g_ps4_bytecopy_fusion = g_ps4_skip_smc_checks && access("/data/PS4SX2/vm-no-bytecopy-fusion", F_OK) != 0;
+	// (AI-assisted) perf-test27: vm-bytecopy-pageprot also allows it with SMC page protection (vm-smc-pageprot).
+	g_ps4_bytecopy_pageprot = g_ps4_smc_page_protect && access("/data/PS4SX2/vm-bytecopy-pageprot", F_OK) == 0;
+	g_ps4_bytecopy_fusion = (g_ps4_skip_smc_checks || g_ps4_bytecopy_pageprot) &&
+		access("/data/PS4SX2/vm-no-bytecopy-fusion", F_OK) != 0;
 	g_ps4_bytecopy_blocks = g_ps4_bytecopy_runs = g_ps4_bytecopy_bytes = 0;
 	g_ps4_bytecopy_short = g_ps4_bytecopy_deadline = g_ps4_bytecopy_mapping = g_ps4_bytecopy_state = g_ps4_bytecopy_scratch = 0;
 	g_ps4_bytecopy_last_source = g_ps4_bytecopy_last_destination = 0;
@@ -1163,7 +1166,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test26\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test27\n");
 	// (AI-assisted) perf-test26: the first start of this build creates the recommended switch folders once
 	// (tested on GTA San Andreas, Shadow of the Colossus and God of War). vm-defaults-v1 records that it
 	// happened, so a folder deleted afterwards stays off.

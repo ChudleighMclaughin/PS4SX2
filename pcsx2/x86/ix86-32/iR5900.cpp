@@ -156,6 +156,7 @@ static u32 s_ps4_idle_loop_slots;
 static u32 s_ps4_idle_loop_offsets;
 u64 g_ps4_multiblock_wait_iterations = 0;
 bool g_ps4_bytecopy_fusion = true;
+bool g_ps4_bytecopy_pageprot = false; // perf-test27: vm-bytecopy-pageprot (ps4/vm/main.cpp)
 static bool s_ps4_bytecopy_loop;
 static u32 s_ps4_bytecopy_config;
 static const u8* s_ps4_bytecopy_native;
@@ -3317,14 +3318,22 @@ StartRecomp:
 #if defined(PCSX2_PS4_VM_BOOT)
 	// (AI-assisted) Match an exact forward copy; keep the original instructions
 	// as a fallback for short runs, unusual mappings and noncanonical limits.
-	if (g_ps4_bytecopy_fusion && g_ps4_skip_smc_checks && s_branchTo == startpc && s_nEndBlock == startpc + 24)
+	// (AI-assisted) perf-test27: also the 7-instruction form some compilers emit (destination increment
+	// before the branch, NOP in the delay slot; ~11% of GTA San Andreas' guest work in a busy city), and
+	// with SMC page protection (vm-bytecopy-pageprot), where writes to code pages fault into the
+	// protection handler like DMA writes do.
+	const bool ps4_copy_nop_form = s_nEndBlock == startpc + 28;
+	if (g_ps4_bytecopy_fusion && (g_ps4_skip_smc_checks || (g_ps4_bytecopy_pageprot && g_ps4_smc_page_protect)) &&
+		s_branchTo == startpc && (s_nEndBlock == startpc + 24 || ps4_copy_nop_form) &&
+		(!ps4_copy_nop_form || memRead32(startpc + 24) == 0))
 	{
 		const u32 load = memRead32(startpc);
 		const u32 decrement = memRead32(startpc + 4);
 		const u32 source_increment = memRead32(startpc + 8);
 		const u32 store = memRead32(startpc + 12);
-		const u32 branch = memRead32(startpc + 16);
-		const u32 destination_increment = memRead32(startpc + 20);
+		const u32 branch_pc = startpc + (ps4_copy_nop_form ? 20 : 16);
+		const u32 branch = memRead32(branch_pc);
+		const u32 destination_increment = memRead32(startpc + (ps4_copy_nop_form ? 16 : 20));
 		const auto opcode = [](u32 instruction) { return instruction >> 26; };
 		const auto rs = [](u32 instruction) { return (instruction >> 21) & 31; };
 		const auto rt = [](u32 instruction) { return (instruction >> 16) & 31; };
@@ -3349,7 +3358,7 @@ StartRecomp:
 		                           rt(source_increment) == source_reg && static_cast<s16>(source_increment & 0xffff) == 1 &&
 		                           opcode(store) == 0x28 && rt(store) == value_reg &&
 		                           static_cast<s16>(store & 0xffff) == 0 && opcode(branch) == 5 &&
-		                           rs(branch) == count_reg && branch_target(startpc + 16, branch) == startpc &&
+		                           rs(branch) == count_reg && branch_target(branch_pc, branch) == startpc &&
 		                           opcode(destination_increment) == 9 && rs(destination_increment) == destination_reg &&
 		                           rt(destination_increment) == destination_reg &&
 		                           static_cast<s16>(destination_increment & 0xffff) == 1;
@@ -3361,6 +3370,8 @@ StartRecomp:
 			u32 fixed_cycles = 0;
 			for (const u32 instruction : {load, decrement, source_increment, store, branch, destination_increment})
 				fixed_cycles += R5900::GetInstruction(instruction).cycles;
+			if (ps4_copy_nop_form)
+				fixed_cycles += R5900::GetInstruction(0).cycles; // the delay-slot NOP
 			fixed_cycles *= 2 - ((cpuRegs.CP0.n.Config >> 18) & 1);
 			const u32 saved_cycles = s_nBlockCycles;
 			s_nBlockCycles = fixed_cycles;
