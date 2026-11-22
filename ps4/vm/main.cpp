@@ -847,7 +847,11 @@ static void* RunVM(void*)
 	// while keeping speech and sound effects responsive and glitch-free.
 	// Needs proper testing across games on the console.
 	const bool legacy_audio = access("/data/PS4SX2/vm-audio-legacy-stretch", F_OK) == 0;
-	settings->SetIntValue("SPU2/Output", "BufferMS", legacy_audio ? 50 : 70);
+	// (AI-assisted) perf-test41: opt-in 150 ms buffer; below full speed, frame-time spikes empty 70 ms (input_short chops).
+	const bool big_audio_buffer = access("/data/PS4SX2/vm-audio-big-buffer", F_OK) == 0;
+	settings->SetIntValue("SPU2/Output", "BufferMS", big_audio_buffer ? 150 : legacy_audio ? 50 : 70);
+	ProbeLog("Audio buffer: %d ms%s\n", big_audio_buffer ? 150 : legacy_audio ? 50 : 70,
+		big_audio_buffer ? " (vm-audio-big-buffer)" : "");
 	settings->SetIntValue("SPU2/Output", "StretchSequenceLengthMS", legacy_audio ? 30 : 35);
 	settings->SetIntValue("SPU2/Output", "StretchSeekWindowMS", legacy_audio ? 20 : 15);
 	settings->SetIntValue("SPU2/Output", "StretchOverlapMS", legacy_audio ? 10 : 8);
@@ -1222,7 +1226,7 @@ int main()
 	// Live telemetry to PC debug server (reads /data/PS4SX2/telemetry.conf). Needs proper testing.
 	const bool telemetry_started = PS4Telemetry::Start();
 	// Record entry before module loading, so a stalled re-launch still has a startup marker.
-	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test40\n");
+	ProbeLog("PS4SX2 Emu 1.00 CHD (AI-assisted) BUILD: PS4SX2-EMU-1.00-CHD-SMC-TELEMETRY+perf-test41\n");
 	// (AI-assisted) perf-test26: the first start of this build creates the recommended switch folders once
 	// (tested on GTA San Andreas, Shadow of the Colossus and God of War). vm-defaults-v1 records that it
 	// happened, so a folder deleted afterwards stays off.
