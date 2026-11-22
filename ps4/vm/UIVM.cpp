@@ -20,18 +20,17 @@
 
 extern void ProbeLog(const char* format, ...);
 
-// (AI-assisted) perf-test32: RAM, CPU and temperature for the stats bar. All weak: a call the firmware or
-// SDK doesn't provide shows "N/A" instead of failing the link. Refreshed every 2 s from RenderOSD.
+// (AI-assisted) perf-test33: RAM, CPU and temperature for the stats bar. The kernel calls are looked up at
+// run time (ps4_kernel_symbol, ps4_sampler.cpp): a call the firmware doesn't provide shows "N/A" instead of
+// failing the build. Refreshed every 2 s from RenderOSD.
 struct PS4DirectMemoryQueryInfo
 {
 	long start;
 	long end;
 	int memoryType;
 };
-extern "C" int sceKernelDirectMemoryQuery(long offset, int flags, PS4DirectMemoryQueryInfo* info, size_t size) __attribute__((weak));
-extern "C" int sceKernelConfiguredFlexibleMemorySize(size_t* size) __attribute__((weak));
+extern "C" void* ps4_kernel_symbol(const char* name);
 extern "C" int sceKernelAvailableFlexibleMemorySize(size_t* size); // also used by HostSysPS4.cpp
-extern "C" int sceKernelGetCpuTemperature(int* temperature) __attribute__((weak));
 #ifndef CLOCK_PROCESS_CPUTIME_ID
 #define CLOCK_PROCESS_CPUTIME_ID 15 // FreeBSD value
 #endif
@@ -54,6 +53,13 @@ namespace
 		const double since = (wall.tv_sec - s_last_wall.tv_sec) + (wall.tv_nsec - s_last_wall.tv_nsec) / 1e9;
 		if (s_last_wall.tv_sec != 0 && since < 2.0)
 			return s_stats;
+
+		using DirectQueryFn = int (*)(long, int, PS4DirectMemoryQueryInfo*, size_t);
+		using SizeFn = int (*)(size_t*);
+		using TempFn = int (*)(int*);
+		static const auto sceKernelDirectMemoryQuery = reinterpret_cast<DirectQueryFn>(ps4_kernel_symbol("sceKernelDirectMemoryQuery"));
+		static const auto sceKernelConfiguredFlexibleMemorySize = reinterpret_cast<SizeFn>(ps4_kernel_symbol("sceKernelConfiguredFlexibleMemorySize"));
+		static const auto sceKernelGetCpuTemperature = reinterpret_cast<TempFn>(ps4_kernel_symbol("sceKernelGetCpuTemperature"));
 
 		double ram = -1.0;
 		if (sceKernelDirectMemoryQuery)

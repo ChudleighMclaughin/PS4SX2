@@ -190,6 +190,31 @@ struct ModuleInfo {
 extern "C" int32_t sceKernelGetModuleList(int32_t* handles, size_t count, size_t* available);
 extern "C" int32_t sceKernelGetModuleInfo(int32_t handle, ModuleInfo* info);
 
+}  // namespace
+
+// (AI-assisted) perf-test33: looks a libkernel function up at run time, so the stats bar can use calls the
+// SDK's import tables don't list (an unlisted import fails the FSELF build). nullptr if not found.
+extern "C" int32_t sceKernelDlsym(int32_t handle, const char* symbol, void** address);
+extern "C" void* ps4_kernel_symbol(const char* name) {
+    int32_t handles[256];
+    size_t count = 0;
+    if (sceKernelGetModuleList(handles, 256, &count) != 0)
+        return nullptr;
+    for (size_t m = 0; m < count && m < 256; m++) {
+        ModuleInfo info;
+        memset(&info, 0, sizeof(info));
+        info.size = sizeof(info);
+        if (sceKernelGetModuleInfo(handles[m], &info) != 0 || strncmp(info.name, "libkernel", 9) != 0)
+            continue;
+        void* address = nullptr;
+        if (sceKernelDlsym(handles[m], name, &address) == 0 && address)
+            return address;
+    }
+    return nullptr;
+}
+
+namespace {
+
 void writeModuleList(int fd) {
     int32_t handles[256];
     size_t count = 0;
