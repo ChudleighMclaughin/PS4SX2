@@ -482,7 +482,14 @@ void MTGS::MainLoop()
 			mtvu_lock.unlock();
 			{
 				const unsigned long long t0 = __builtin_ia32_rdtsc();
-				s_sem_event.WaitForWork();
+				// (AI-assisted) perf-test45 (vm-gs-wait-spin): spin ~50 us before sleeping, as MTVU does, so the EE's
+				// next packet usually finds the GS awake and skips sceKernelSignalSema (~3% of the EE in GTA San
+				// Andreas, PKG-50). GS_pct then counts the spin as busy.
+				static const bool s_ps4_gs_wait_spin = access("/data/PS4SX2/vm-gs-wait-spin", F_OK) == 0;
+				if (s_ps4_gs_wait_spin)
+					s_sem_event.WaitForWorkWithSpin();
+				else
+					s_sem_event.WaitForWork();
 				g_orbis_gs_idle_ticks += __builtin_ia32_rdtsc() - t0;
 			}
 			mtvu_lock.lock();
