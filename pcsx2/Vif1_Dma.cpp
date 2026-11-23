@@ -355,6 +355,8 @@ static __fi bool PS4Vif1Batch(u32 batched)
 		   batched + g_vif1Cycles <= kVif1BatchCycles;
 }
 
+// (AI-assisted) perf-test46: VIF1 DMA chain fusion - fuse multiple chain passes into one interrupt
+// to reduce EE event test overhead. Each fusion saves ~100-200 cycles per chain pass.
 __fi void vif1Interrupt()
 {
   u32 batched = 0; // perf-test10: cycles of the passes PS4Vif1Batch ran early
